@@ -9,5 +9,10 @@ config LVX_USE_DEMO_CONTEST2026_349_LAUNCHER
 	depends on GRAPHICS_LVGL
 	select LV_USE_NUTTX
 	select LV_USE_NUTTX_TOUCHSCREEN
+	select LV_FONT_MONTSERRAT_24
+	select LV_FONT_MONTSERRAT_32
+	select LV_FONT_MONTSERRAT_40
+	select LV_FONT_MONTSERRAT_48
+	select PIPES if BENCHMARK_COREMARK
 	---help---
 		Enable the contest 2026 team 349 LVGL launcher demo.
