@@ -30,6 +30,15 @@
 #  include "s6_i2c.h"
 #endif
 
+#ifdef CONFIG_SMP
+#  include <nuttx/cache.h>
+#  include "arm64_internal.h"
+#endif
+
+#if defined(CONFIG_SMP) && !defined(CONFIG_BOARD_EARLY_INITIALIZE)
+#  error "SMP needs CONFIG_BOARD_EARLY_INITIALIZE to flush the idle stacks"
+#endif
+
 /****************************************************************************
  * Public Functions
  ****************************************************************************/
@@ -38,6 +47,23 @@ void s6_board_initialize(void)
 {
   /* DDR, clocks, pin mux and UART are initialized by BL31/U-Boot. */
 }
+
+#ifdef CONFIG_BOARD_EARLY_INITIALIZE
+void board_early_initialize(void)
+{
+#ifdef CONFIG_SMP
+  /* CPU1-3 push their first stack frames with the D-cache off and pop
+   * them with it on, so the lines CPU0 wrote there in up_initial_state()
+   * must not survive in any cache.  The set/way flush in nx_smp_start()
+   * is not enough on S6, clean and invalidate them by VA to PoC.
+   */
+
+  up_flush_dcache((uintptr_t)g_cpu_idlestackalloc[1],
+                  (uintptr_t)g_cpu_idlestackalloc +
+                  sizeof(g_cpu_idlestackalloc));
+#endif
+}
+#endif
 
 /* This tree's NSH enables CONFIG_BOARDCTL (mkrd), and boards/boardctl.c
  * references board_app_initialize() unconditionally.
