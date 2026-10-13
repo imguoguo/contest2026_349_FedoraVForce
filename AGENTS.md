@@ -35,7 +35,7 @@
 - 参赛构建（在 openvela 工作区根目录，即本仓上一级；工具链用 `prebuilts/gcc/linux-x86_64/aarch64-none-elf`）：
 
   ```bash
-  ./build.sh vendor/openvela/boards/contest2026_349_board/nsh [menuconfig|distclean] [-j]
+  ./build.sh vendor/openvela/boards/contest2026_349_board/configs/nsh [menuconfig|distclean] [-j]
   ```
 
 - 部署：板上 U-Boot 从 SD/eMMC 读取 `nuttx.bin` 到 `0x03080000` 后 `booti`。
