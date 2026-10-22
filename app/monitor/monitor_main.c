@@ -66,7 +66,7 @@ struct monitor_task_s
   int stack_size;
   char cpu[4];
   char name[24];
-  char state[12];
+  char state[24];            /* "Waiting,Semaphore" */
 };
 
 /****************************************************************************
@@ -122,7 +122,7 @@ static int monitor_read(int pid, const char *file, char *buf, size_t size)
   return n;
 }
 
-/* Value of a "Key:   value" line, copied up to a ',' or the line end */
+/* Value of a "Key:   value" line */
 
 static void monitor_field(const char *buf, const char *key, char *out,
                           size_t size)
@@ -138,7 +138,7 @@ static void monitor_field(const char *buf, const char *key, char *out,
 
   for (p += strlen(key); *p == ' ' || *p == '\t'; p++);
 
-  while (n < size - 1 && p[n] != '\0' && p[n] != '\n' && p[n] != ',')
+  while (n < size - 1 && p[n] != '\0' && p[n] != '\n')
     {
       out[n] = p[n];
       n++;
@@ -234,6 +234,7 @@ static void monitor_update_cb(lv_timer_t *timer)
 {
   struct mallinfo mi = mallinfo();
   struct monitor_task_s *t;
+  const char *p;
   char text[24];
   int load;
   int n;
@@ -279,7 +280,12 @@ static void monitor_update_cb(lv_timer_t *timer)
       lv_table_set_cell_value(g_table, i + 1, 1, t->name);
       lv_table_set_cell_value_fmt(g_table, i + 1, 2, "%d", t->prio);
       lv_table_set_cell_value(g_table, i + 1, 3, t->cpu);
-      lv_table_set_cell_value(g_table, i + 1, 4, t->state);
+
+      /* What a waiting task waits for says more than "Waiting" */
+
+      p = strchr(t->state, ',');
+      lv_table_set_cell_value(g_table, i + 1, 4, p != NULL ? p + 1 :
+                                                 t->state);
 
       if (t->load < 0)
         {
