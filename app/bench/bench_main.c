@@ -150,7 +150,7 @@ static lv_obj_t *g_cpu_value[nitems(g_tests)];
 /* Scene in progress, -1 when idle */
 
 static int g_scene = -1;
-static uint32_t g_scene_start;
+static uint32_t g_scene_start;     /* Of the scene, then of CoreMark */
 static uint32_t g_frames;
 static uint64_t g_frame_ticks;     /* Perf counter ticks */
 static uint64_t g_flush_ticks;
@@ -578,7 +578,6 @@ static int bench_coremark_start(void)
 
 static void bench_finish(void)
 {
-  lv_label_set_text_fmt(g_avg, "%d", g_fps_sum / BENCH_SCENES);
   lv_arc_set_value(g_ring, 100);
   lv_label_set_text(g_run_label, "RUN AGAIN");
 }
@@ -603,9 +602,11 @@ static void bench_run_timer_cb(lv_timer_t *timer)
           return;
         }
 
+      lv_label_set_text_fmt(g_avg, "%d", g_fps_sum / BENCH_SCENES);
+
 #ifdef BENCH_COREMARK
+      g_scene_start = bench_ms();
       lv_label_set_text(g_coremark, "....");
-      lv_label_set_text(g_run_label, "COREMARK RUNNING");
       if (bench_coremark_start() < 0)
         {
           lv_label_set_text(g_coremark, "N/A");
@@ -617,6 +618,10 @@ static void bench_run_timer_cb(lv_timer_t *timer)
 #ifdef BENCH_COREMARK
   if (g_coremark_score < 0)
     {
+      /* Keep showing that it runs, it takes about 15 seconds */
+
+      lv_label_set_text_fmt(g_run_label, "COREMARK  %u S",
+                            (unsigned)(bench_ms() - g_scene_start) / 1000);
       return;
     }
 
