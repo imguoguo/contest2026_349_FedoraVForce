@@ -65,6 +65,22 @@ CoreMark 10847 iterations/s（-O0 是 2233，4.9 倍）。镜像 2.69MB → 2.23
 - `s6_uart_receive()` 清错误位是裸的读-改-写，没走 `modifyreg32` 的锁，理论上
   会和别的核开关中断使能位冲突。实测没有发生过接收错误，不是这几次现象的
   原因，留作驱动的改进点
-- 还没有在 16ms 下真正复现过；下一步改成 16ms，请人在板子旁边直接看
+- 16ms（-O2）下没有复现：跑 bench 的整个过程和之后，NSH 一直能响应
+  （`uname`、`free`），板上操作也流畅（10/22）。之前在 -O0 下的那次卡死没有
+  再现，原因没有查到；当时每帧要 13–25ms，比 16ms 周期还长，launcher 主循环几乎
+  不睡，也许和这个有关。以后如果再遇到，先用 monitor 看 `nsh_main` 的状态
 
-## 4. 16ms
+## 4. 16ms，-O2
+
+`CONFIG_LV_DEF_REFR_PERIOD=16`。10/22。
+
+| 场景 | FPS | ms/frame | flush ms |
+| --- | --- | --- | --- |
+| Rectangles | 58 | 6.7 | 6.1 |
+| Rounded + border | 58 | 8.4 | 6.1 |
+| Text | 58 | 7.6 | 5.8 |
+| Arcs | 58 | 8.0 | 3.3 |
+| Full-screen slide | 58 | 8.7 | 7.0 |
+
+CoreMark 10824 iterations/s，和 33ms 时一样，界面多刷新的那些帧没有拖慢它
+（它在 CPU3 上）。每帧耗时没变，FPS 翻倍到 58，被 16ms 周期卡住。
