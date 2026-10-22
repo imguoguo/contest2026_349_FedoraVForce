@@ -15,6 +15,7 @@
     <linkfile src="app/monitor" dest="packages/demos/contest2026_349_monitor"/>
     <linkfile src="app/ui" dest="packages/demos/contest2026_349_ui"/>
     <linkfile src="app/digit" dest="packages/demos/contest2026_349_digit"/>
+    <linkfile src="app/touch" dest="packages/demos/contest2026_349_touch"/>
     <linkfile src="board/contest_board" dest="vendor/openvela/boards/contest2026_349_board"/>
   </project>
 </manifest>

@@ -1,0 +1,7 @@
+############################################################################
+# app/touch/Make.defs
+############################################################################
+
+ifneq ($(CONFIG_LVX_USE_DEMO_TOUCH),)
+CONFIGURED_APPS += $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+endif

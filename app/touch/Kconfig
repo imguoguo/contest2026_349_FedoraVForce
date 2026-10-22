@@ -1,0 +1,15 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config LVX_USE_DEMO_TOUCH
+	bool "LVGL touch test"
+	default n
+	depends on GRAPHICS_LVGL
+	select LV_USE_NUTTX
+	select LV_USE_NUTTX_TOUCHSCREEN
+	select LVX_UI
+	---help---
+		Finger trails, live coordinates, the report rate of the touch
+		controller and a calibration check with five targets.

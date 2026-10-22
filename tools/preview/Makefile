@@ -13,7 +13,7 @@ LVGL_DIR ?= $(error LVGL_DIR must point to open-vela/apps_graphics_lvgl)
 
 APP     = ../../app
 OUT     = build
-SCENES  = launcher paint bench monitor
+SCENES  = launcher paint bench monitor touch
 
 CFLAGS  = -O2 -g -Wall -Wno-unused-parameter
 CFLAGS += -I$(OUT)/inc -Istub -I. -I$(APP)/ui -I$(APP)/digit
@@ -31,6 +31,7 @@ SRCS_paint    = $(APP)/paint/paint_main.c $(APP)/digit/digit.c \
 SRCS_bench    = $(APP)/bench/bench_main.c $(APP)/digit/digit.c \
                 $(APP)/digit/digit_model.c $(APP)/digit/digit_samples.c
 SRCS_monitor  = $(APP)/monitor/monitor_main.c
+SRCS_touch    = $(APP)/touch/touch_main.c
 
 # Home tile layouts with 0 to 5 pinned apps
 
