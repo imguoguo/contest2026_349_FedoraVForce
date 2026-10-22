@@ -1,0 +1,7 @@
+############################################################################
+# app/monitor/Make.defs
+############################################################################
+
+ifneq ($(CONFIG_LVX_USE_DEMO_MONITOR),)
+CONFIGURED_APPS += $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+endif
