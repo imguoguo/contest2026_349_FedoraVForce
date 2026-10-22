@@ -1,0 +1,11 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config LVX_UI
+	bool
+	depends on GRAPHICS_LVGL
+	---help---
+		Colors, fonts and widgets shared by the launcher and its apps.
+		Selected by the apps that use it.
