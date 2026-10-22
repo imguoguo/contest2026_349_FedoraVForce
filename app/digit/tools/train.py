@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 ############################################################################
-# app/paint/tools/train.py
+# app/digit/tools/train.py
 #
 # Train the 784-128-10 MLP used by paint for digit recognition.
 # Only numpy is needed.  MNIST is not part of the repository, see README.md

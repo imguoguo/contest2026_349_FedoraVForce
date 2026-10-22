@@ -1,5 +1,5 @@
 /****************************************************************************
- * app/paint/tools/digit_test.c
+ * app/digit/tools/digit_test.c
  *
  * Host test of the digit recognition:
  *   1. MNIST test set through the classifier, must match the accuracy the

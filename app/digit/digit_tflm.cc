@@ -1,5 +1,5 @@
 /****************************************************************************
- * app/paint/digit_tflm.cc
+ * app/digit/digit_tflm.cc
  *
  * Digit recognition on TFLite Micro, the C API is in digit.h.
  *

@@ -10,6 +10,8 @@ config LVX_USE_DEMO_PAINT
 	select LV_USE_NUTTX
 	select LV_USE_NUTTX_TOUCHSCREEN
 	select LVX_UI
+	select LVX_DIGIT
 	---help---
 		Full screen finger paint with on-device handwritten digit
-		recognition (784-128-10 MLP trained on MNIST, runs on the CPU).
+		recognition (784-128-10 MLP trained on MNIST), on TFLite Micro
+		with TFLITEMICRO, on plain C inference otherwise.

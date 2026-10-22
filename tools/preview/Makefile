@@ -16,7 +16,7 @@ OUT     = build
 SCENES  = launcher paint bench monitor
 
 CFLAGS  = -O2 -g -Wall -Wno-unused-parameter
-CFLAGS += -I$(OUT)/inc -Istub -I. -I$(APP)/ui
+CFLAGS += -I$(OUT)/inc -Istub -I. -I$(APP)/ui -I$(APP)/digit
 CFLAGS += -DLV_CONF_KCONFIG_EXTERNAL_INCLUDE='"lv_kconfig.h"'
 
 LVGL_SRCS = $(shell find $(LVGL_DIR)/src -name '*.c')
@@ -26,8 +26,8 @@ UI_FONTS = $(wildcard $(APP)/ui/fonts/*.c)
 UI_SRCS = $(APP)/ui/lvx_ui.c $(UI_FONTS)
 
 SRCS_launcher = $(APP)/launcher/launcher_main.c
-SRCS_paint    = $(APP)/paint/paint_main.c $(APP)/paint/digit.c \
-                $(APP)/paint/digit_model.c
+SRCS_paint    = $(APP)/paint/paint_main.c $(APP)/digit/digit.c \
+                $(APP)/digit/digit_model.c
 SRCS_bench    = $(APP)/bench/bench_main.c
 SRCS_monitor  = $(APP)/monitor/monitor_main.c
 

@@ -1,5 +1,5 @@
 /****************************************************************************
- * app/paint/digit.h
+ * app/digit/digit.h
  *
  * Handwritten digit recognition: strokes -> 28x28 MNIST style image ->
  * 784-128-10 MLP.  The MLP runs either on TFLite Micro (digit_tflm.cc) or
@@ -7,8 +7,8 @@
  * tools/digit_test.c also runs on the host.
  ****************************************************************************/
 
-#ifndef __APP_PAINT_DIGIT_H
-#define __APP_PAINT_DIGIT_H
+#ifndef __APP_DIGIT_DIGIT_H
+#define __APP_DIGIT_DIGIT_H
 
 /****************************************************************************
  * Included Files
@@ -90,4 +90,4 @@ int digit_tflm_classify(const float img[DIGIT_INPUTS],
 }
 #endif
 
-#endif /* __APP_PAINT_DIGIT_H */
+#endif /* __APP_DIGIT_DIGIT_H */

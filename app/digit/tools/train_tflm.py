@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 ############################################################################
-# app/paint/tools/train_tflm.py
+# app/digit/tools/train_tflm.py
 #
 # Train the same 784-128-10 MLP as train.py with TensorFlow, on the same
 # data and augmentation, and convert it to a fully int8 .tflite (int8

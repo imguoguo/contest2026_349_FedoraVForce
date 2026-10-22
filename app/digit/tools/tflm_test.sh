@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ############################################################################
-# app/paint/tools/tflm_test.sh
+# app/digit/tools/tflm_test.sh
 #
 # Build digit_test with TFLite Micro for the host and run it, so the int8
 # model on TFLite Micro is checked before it goes on the board.  TFLite

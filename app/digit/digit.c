@@ -1,5 +1,5 @@
 /****************************************************************************
- * app/paint/digit.c
+ * app/digit/digit.c
  *
  * Handwritten digit recognition, see digit.h.
  *

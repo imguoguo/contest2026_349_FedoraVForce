@@ -1,0 +1,12 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config LVX_DIGIT
+	bool
+	---help---
+		Handwritten digit recognition shared by paint and bench: stroke
+		preprocessing, the MLP on TFLite Micro (with TFLITEMICRO) and
+		the plain C inference kept for comparison.  Selected by the apps
+		that use it.
