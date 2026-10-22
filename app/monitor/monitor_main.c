@@ -458,6 +458,8 @@ static int monitor_start(lv_nuttx_result_t *result)
       return -1;
     }
 
+  ui_hide_perf();
+
   monitor_create();
   return 0;
 }

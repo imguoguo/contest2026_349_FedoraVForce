@@ -1147,6 +1147,8 @@ static int bench_start(lv_nuttx_result_t *result)
       return -1;
     }
 
+  ui_hide_perf();
+
   lv_display_add_event_cb(result->disp, bench_refr_start_cb,
                           LV_EVENT_REFR_START, NULL);
   lv_display_add_event_cb(result->disp, bench_render_start_cb,

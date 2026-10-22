@@ -527,6 +527,8 @@ static int paint_start(lv_nuttx_result_t *result)
       return -1;
     }
 
+  ui_hide_perf();
+
   g_npoints = 0;
   g_recognize = false;
   g_recognize_timer = NULL;
