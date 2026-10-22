@@ -43,15 +43,15 @@ SRCS_paint    = $(APP)/paint/paint_main.c $(APP)/paint/digit.c \
 SRCS_bench    = $(APP)/bench/bench_main.c
 SRCS_monitor  = $(APP)/monitor/monitor_main.c
 
-# Home tile layouts with 0 to 5 apps, "clock" and "camera" are dummies
+# Home tile layouts with 0 to 5 pinned apps
 
 LAYOUTS = 0 1 2 3 4 5
 APPS_0  =
 APPS_1  = paint
 APPS_2  = paint bench
 APPS_3  = paint bench monitor
-APPS_4  = paint bench monitor clock
-APPS_5  = paint bench monitor clock camera
+APPS_4  = paint bench monitor touch
+APPS_5  = paint bench monitor touch lvgl_widgets
 
 all: $(SCENES:%=$(OUT)/preview_%) $(LAYOUTS:%=$(OUT)/layout_%)
 
@@ -84,7 +84,7 @@ $(OUT)/preview_%: scene_%.c preview.c preview.h $(UI_SRCS) $$(SRCS_$$*) \
 $(OUT)/layout_%: scene_launcher.c preview.c preview.h $(UI_SRCS) \
                  $(SRCS_launcher) $(OUT)/liblvgl.a
 	$(CC) $(CFLAGS) -include preview.h -DPREVIEW_LAYOUT=$* \
-	  -DCONFIG_LVX_LAUNCHER_APPS='"$(APPS_$*)"' -o $@ scene_launcher.c \
+	  -DCONFIG_LVX_LAUNCHER_PINNED='"$(APPS_$*)"' -o $@ scene_launcher.c \
 	  preview.c $(UI_SRCS) $(OUT)/liblvgl.a -lz -lm
 
 run: all

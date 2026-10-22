@@ -36,11 +36,8 @@ static const struct builtin_s g_builtins[] =
   { "paint",   100, 16384, preview_app_main },
   { "bench",   100, 16384, preview_app_main },
   { "monitor", 100, 16384, preview_app_main },
-
-  /* Without a launcher entry, to check the default tile and layouts */
-
-  { "clock",   100, 16384, preview_app_main },
-  { "camera",  100, 16384, preview_app_main },
+  { "touch",   100, 16384, preview_app_main },
+  { "lvdemo",  100, 16384, preview_app_main },
 };
 
 static uint32_t preview_tick(void)

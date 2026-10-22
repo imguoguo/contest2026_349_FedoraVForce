@@ -94,6 +94,20 @@ int main(void)
 
   tap(540, 1740);
   preview_step(500);
+
+  /* ALL APPS sits next to MONITOR below the first screen */
+
+  lv_obj_scroll_to_y(g_home_scr, LV_COORD_MAX, LV_ANIM_OFF);
+  preview_step(100);
+  preview_shot("2b-home-end.png");
+  tap(780, 1500);
+  preview_step(500);
+  preview_shot("7-apps.png");
+  lv_obj_scroll_to_y(g_apps_scr, LV_COORD_MAX, LV_ANIM_OFF);
+  preview_step(100);
+  preview_shot("7b-apps-end.png");
+  lv_screen_load(g_home_scr);
+  preview_step(100);
   lv_obj_scroll_to_y(g_home_scr, LV_COORD_MAX, LV_ANIM_OFF);
   tap(540, 1840);
   preview_step(1000);
