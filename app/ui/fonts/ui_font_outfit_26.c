@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 26 px
  * Bpp: 4
- * Opts: --no-compress --no-prefilter --bpp 4 --format lvgl --lv-include lvgl/lvgl.h --font /tmp/claude-501/gen_fonts.VJYOvC/outfit-regular.ttf --size 26 --symbols  !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~ -o /Users/guoguo/vela-local/contest2026_349_FedoraVForce/app/ui/fonts/ui_font_outfit_26.c
+ * Opts: --no-compress --no-prefilter --bpp 4 --format lvgl --lv-include lvgl/lvgl.h --font outfit-regular.ttf --size 26 --symbols  !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~ -o ui_font_outfit_26.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

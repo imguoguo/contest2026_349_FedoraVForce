@@ -33,13 +33,16 @@ instance()
   python3 -m fontTools.varLib.instancer -q -o "$TMP/$2.ttf" "$1" "wght=$3"
 }
 
-# name font size characters, the C name comes from the file name
+# name font size characters.  The C name comes from the file name.  Run
+# in the font directory with relative paths, lv_font_conv writes its
+# command line into the output.
 
 convert()
 {
-  $CONV --no-compress --no-prefilter --bpp 4 --format lvgl \
-        --lv-include lvgl/lvgl.h --font "$TMP/$2.ttf" --size "$3" \
-        --symbols "$4" -o "$OUT/$1.c"
+  (cd "$TMP" && $CONV --no-compress --no-prefilter --bpp 4 --format lvgl \
+                      --lv-include lvgl/lvgl.h --font "$2.ttf" \
+                      --size "$3" --symbols "$4" -o "$1.c")
+  mv "$TMP/$1.c" "$OUT/$1.c"
 }
 
 UPPER="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
