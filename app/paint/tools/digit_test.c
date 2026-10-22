@@ -1,21 +1,23 @@
 /****************************************************************************
  * app/paint/tools/digit_test.c
  *
- * Host test for digit.c:
- *   1. MNIST test set through digit_classify(), must match train.py
+ * Host test of the digit recognition:
+ *   1. MNIST test set through the classifier, must match the accuracy the
+ *      training script printed
  *   2. Synthetic touch strokes of 0-9 through digit_preprocess(), the way
  *      paint feeds the model on the board
  *
- *   cc -O2 -I.. -o digit_test digit_test.c ../digit.c ../digit_model.c \
- *      -lz -lm
+ *   cc -O2 -I.. -o digit_test digit_test.c ../digit.c ../digit_model.c -lm
  *   ./digit_test <mnist dir>
+ *
+ * With -DDIGIT_TEST_TFLM the TFLite Micro version runs too, see
+ * tflm_test.sh for building it with TFLite Micro on the host.
  ****************************************************************************/
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zlib.h>
 
 #include "digit.h"
 
@@ -126,22 +128,40 @@ static void show(const float img[DIGIT_INPUTS])
     }
 }
 
+/* The plain C inference, and TFLite Micro when built with it */
+
+static const struct
+{
+  const char *name;
+  int (*classify)(const float *img, float *prob);
+}
+g_impls[] =
+{
+  { "plain C", digit_classify },
+#ifdef DIGIT_TEST_TFLM
+  { "TFLite Micro", digit_tflm_classify },
+#endif
+};
+
+/* Read a gzipped MNIST file through gzip, no zlib needed */
+
 static unsigned char *load(const char *dir, const char *name, int offset,
                            int size)
 {
   unsigned char *buf = malloc(offset + size);
-  char path[512];
-  gzFile f;
+  char cmd[512];
+  FILE *f;
 
-  snprintf(path, sizeof(path), "%s/%s", dir, name);
-  f = gzopen(path, "rb");
-  if (f == NULL || gzread(f, buf, offset + size) != offset + size)
+  snprintf(cmd, sizeof(cmd), "gzip -dc '%s/%s'", dir, name);
+  f = popen(cmd, "r");
+  if (f == NULL ||
+      fread(buf, 1, offset + size, f) != (size_t)(offset + size))
     {
-      fprintf(stderr, "cannot read %s\n", path);
+      fprintf(stderr, "cannot read %s/%s\n", dir, name);
       exit(1);
     }
 
-  gzclose(f);
+  pclose(f);
   return buf;
 }
 
@@ -152,9 +172,10 @@ int main(int argc, char *argv[])
   float prob[DIGIT_CLASSES];
   unsigned char *images;
   unsigned char *labels;
-  int correct = 0;
-  int total = 0;
+  int correct;
+  int total;
   int digit;
+  int k;
   int i;
   int j;
 
@@ -168,38 +189,47 @@ int main(int argc, char *argv[])
                 10000 * DIGIT_INPUTS);
   labels = load(argv[1], "t10k-labels-idx1-ubyte.gz", 8, 10000);
 
-  for (i = 0; i < 10000; i++)
+  for (k = 0; k < (int)(sizeof(g_impls) / sizeof(g_impls[0])); k++)
     {
-      for (j = 0; j < DIGIT_INPUTS; j++)
-        {
-          img[j] = images[16 + i * DIGIT_INPUTS + j] / 255.0f;
-        }
+      printf("== %s\n", g_impls[k].name);
 
-      correct += digit_classify(img, prob) == labels[8 + i];
-    }
-
-  printf("MNIST test set: %.2f%%\n\n", correct / 100.0f);
-
-  srand(349);
-  for (digit = 0; digit < 10; digit++)
-    {
       correct = 0;
-      for (i = 0; i < SAMPLES; i++)
+      for (i = 0; i < 10000; i++)
         {
-          digit_preprocess(pts, synth(digit, pts), img);
-          j = digit_classify(img, prob);
-          correct += j == digit;
-          if (i == 0)
+          for (j = 0; j < DIGIT_INPUTS; j++)
             {
-              printf("digit %d -> %d (%.1f%%)\n", digit, j, prob[j] * 100);
-              show(img);
+              img[j] = images[16 + i * DIGIT_INPUTS + j] / 255.0f;
             }
+
+          correct += g_impls[k].classify(img, prob) == labels[8 + i];
         }
 
-      printf("digit %d: %d/%d\n\n", digit, correct, SAMPLES);
-      total += correct;
+      printf("MNIST test set: %.2f%%\n\n", correct / 100.0f);
+
+      srand(349);
+      total = 0;
+      for (digit = 0; digit < 10; digit++)
+        {
+          correct = 0;
+          for (i = 0; i < SAMPLES; i++)
+            {
+              digit_preprocess(pts, synth(digit, pts), img);
+              j = g_impls[k].classify(img, prob);
+              correct += j == digit;
+              if (i == 0 && k == 0)
+                {
+                  printf("digit %d -> %d (%.1f%%)\n", digit, j,
+                         prob[j] * 100);
+                  show(img);
+                }
+            }
+
+          printf("digit %d: %d/%d\n", digit, correct, SAMPLES);
+          total += correct;
+        }
+
+      printf("synthetic strokes: %d/%d\n\n", total, 10 * SAMPLES);
     }
 
-  printf("synthetic strokes: %d/%d\n", total, 10 * SAMPLES);
   return 0;
 }

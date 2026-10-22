@@ -250,8 +250,9 @@ static void paint_recognize_cb(lv_timer_t *timer)
   float img[DIGIT_INPUTS];
   float prob[DIGIT_CLASSES];
   float rest[DIGIT_CLASSES];
+  const char *engine = "plain C";
   int top[PAINT_TOP_N];
-  int best;
+  int best = -1;
   int i;
   int j;
 
@@ -264,7 +265,19 @@ static void paint_recognize_cb(lv_timer_t *timer)
     }
 
   digit_preprocess(g_points, g_npoints, img);
-  best = digit_classify(img, prob);
+
+  /* TFLite Micro when it is built in, the plain C inference otherwise */
+
+#ifdef CONFIG_TFLITEMICRO
+  best = digit_tflm_classify(img, prob);
+  engine = "TFLite Micro";
+#endif
+  if (best < 0)
+    {
+      best = digit_classify(img, prob);
+      engine = "plain C";
+    }
+
   paint_show_input(img);
 
   /* Top three by probability */
@@ -286,8 +299,8 @@ static void paint_recognize_cb(lv_timer_t *timer)
       paint_percent(g_card_top[i][2], prob[top[i]]);
     }
 
-  printf("paint: %d (%d%%), then %d, %d\n", best,
-         (int)(prob[best] * 100 + 0.5f), top[1], top[2]);
+  printf("paint: %d (%d%%), then %d, %d on %s\n", best,
+         (int)(prob[best] * 100 + 0.5f), top[1], top[2], engine);
 
   lv_label_set_text_fmt(g_card_digit, "%d", best);
   lv_label_set_text_fmt(g_card_conf, "%d%%",
