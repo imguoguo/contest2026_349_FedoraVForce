@@ -18,10 +18,19 @@ config LVX_USE_DEMO_LAUNCHER
 if LVX_USE_DEMO_LAUNCHER
 
 config LVX_LAUNCHER_APPS
-	string "Apps shown in the launcher"
+	string "Apps on the all apps page"
 	default ""
 	---help---
-		Space separated list of LVGL builtin apps, e.g. "paint bench".
-		Apps that are not built into the image are skipped.
+		Space separated list of apps, e.g. "paint bench lvgl_widgets".
+		An entry is a builtin name, or a name from the launcher's app
+		table that starts a builtin with an argument (lvgl_widgets runs
+		"lvdemo widgets").  Apps that are not built in are skipped.
+
+config LVX_LAUNCHER_PINNED
+	string "Apps pinned to the home screen"
+	default "paint bench monitor"
+	---help---
+		Space separated entries of LVX_LAUNCHER_APPS that get a tile on
+		the home screen.  All of them are on the all apps page.
 
 endif

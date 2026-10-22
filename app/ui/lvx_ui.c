@@ -105,6 +105,11 @@ static void ui_num_count_cb(lv_anim_t *a, int32_t v)
  * Public Functions
  ****************************************************************************/
 
+void ui_hide_perf(void)
+{
+  lv_obj_add_flag(lv_layer_sys(), LV_OBJ_FLAG_HIDDEN);
+}
+
 lv_obj_t *ui_box(lv_obj_t *parent, uint32_t color, int32_t radius)
 {
   lv_obj_t *obj = lv_obj_create(parent);

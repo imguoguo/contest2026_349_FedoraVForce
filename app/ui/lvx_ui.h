@@ -87,6 +87,12 @@ extern const lv_font_t ui_font_outfit_52;
  * Public Function Prototypes
  ****************************************************************************/
 
+/* LV_USE_PERF_MONITOR, which the LVGL benchmark needs, puts a performance
+ * label on the system layer of every LVGL app.  Our apps hide it.
+ */
+
+void ui_hide_perf(void);
+
 /* Plain rectangle without theme style, scrolling or clicks */
 
 lv_obj_t *ui_box(lv_obj_t *parent, uint32_t color, int32_t radius);

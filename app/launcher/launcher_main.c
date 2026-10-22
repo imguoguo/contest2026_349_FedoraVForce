@@ -4,8 +4,9 @@
  * LVGL launcher
  * VSAI LogicPi A1 (Amlogic S6): MIPI DSI 1080x1920 + GT9XX touch
  *
- * Lock screen, dashboard home and About page.  Apps are NSH builtins
- * listed in CONFIG_LVX_LAUNCHER_APPS.  LVGL is a single global instance,
+ * Lock screen, dashboard home, About and the all apps page.  Apps are NSH
+ * builtins listed in CONFIG_LVX_LAUNCHER_APPS, the home screen shows the
+ * ones in CONFIG_LVX_LAUNCHER_PINNED.  LVGL is a single global instance,
  * so the launcher releases it before starting an app and initializes it
  * again after the app exits.
  ****************************************************************************/
@@ -47,6 +48,9 @@
 #define LAUNCHER_STRIP_H      130
 #define LAUNCHER_HALF_W       ((UI_CONTENT_W - UI_GAP) / 2)
 #define LAUNCHER_ROW_H        104     /* About key value rows */
+#define LAUNCHER_CARD_H       240     /* Cards on the all apps page */
+#define LAUNCHER_CARD_BASE    90      /* Card title baseline above bottom */
+#define LAUNCHER_MAX_APPS     24
 
 #define LAUNCHER_UNLOCK_Y     1320    /* Top of the orange unlock block */
 #define LAUNCHER_UNLOCK_DIST  240
@@ -56,19 +60,35 @@
 #define LAUNCHER_FLOAT_TIME   800
 #define LAUNCHER_LIFT_TIME    350
 
-/* No touch for this long and the FPS counters show IDLE */
+/* The FPS counters show IDLE after a second without touch in which only
+ * the clock rolled, about one roll worth of frames.
+ */
 
 #define LAUNCHER_IDLE_TIME    1000
+#define LAUNCHER_IDLE_FRAMES  (UI_ROLL_TIME / LV_DEF_REFR_PERIOD + 2)
 
 /****************************************************************************
  * Private Types
  ****************************************************************************/
 
-/* How an app looks on its home tile */
+enum launcher_group_e
+{
+  LAUNCHER_TEAM,
+  LAUNCHER_OPENVELA,
+  LAUNCHER_LVGL,
+  LAUNCHER_GROUPS
+};
+
+/* An entry of CONFIG_LVX_LAUNCHER_APPS: what it starts and how its tile
+ * looks
+ */
 
 struct launcher_app_s
 {
-  const char *name;         /* Builtin name, NULL for About */
+  const char *id;           /* Name in the config, NULL for About */
+  const char *prog;         /* Builtin to start, NULL for the id itself */
+  const char *arg;          /* Argument for it, may be NULL */
+  enum launcher_group_e group;
   const char *title;
   const char *desc;
   const char *tag;          /* Small label, may be NULL */
@@ -78,11 +98,21 @@ struct launcher_app_s
   uint32_t icon_color;
 };
 
+/* An app that is built in */
+
+struct launcher_entry_s
+{
+  struct launcher_app_s app;
+  char title[16];           /* For apps not in g_apps */
+  int index;                /* Builtin index */
+};
+
 /****************************************************************************
  * Private Function Prototypes
  ****************************************************************************/
 
 static void launcher_about_open_cb(lv_event_t *e);
+static void launcher_apps_open_cb(lv_event_t *e);
 static void launcher_lock_cb(lv_event_t *e);
 
 /****************************************************************************
@@ -92,24 +122,69 @@ static void launcher_lock_cb(lv_event_t *e);
 static const struct launcher_app_s g_apps[] =
 {
   {
-    "paint", "PAINT", "Write a digit, the board reads it", "AI DIGITS",
+    "paint", NULL, NULL, LAUNCHER_TEAM,
+    "PAINT", "Write a digit, the board reads it", "AI DIGITS",
     LV_SYMBOL_EDIT, UI_ORANGE, 0xffffff, 0xffffff
   },
   {
-    "bench", "BENCH", "LVGL render + CoreMark", NULL,
+    "bench", NULL, NULL, LAUNCHER_TEAM,
+    "BENCH", "LVGL render + CoreMark", NULL,
     LV_SYMBOL_CHARGE, UI_INK, 0xffffff, UI_ORANGE
   },
   {
-    "monitor", "MONITOR", "4 cores, tasks and memory", "SMP",
+    "monitor", NULL, NULL, LAUNCHER_TEAM,
+    "MONITOR", "4 cores, tasks and memory", "SMP",
     LV_SYMBOL_BARS, UI_BLUE, 0xffffff, 0xffffff
+  },
+  {
+    "touch", NULL, NULL, LAUNCHER_TEAM,
+    "TOUCH", "Trails, report rate, calibration", NULL,
+    LV_SYMBOL_GPS, UI_YELLOW, UI_INK, UI_INK
+  },
+  {
+    "snake", "lvdemo", "snake", LAUNCHER_OPENVELA,
+    "SNAKE", "Snake game from openvela", NULL,
+    LV_SYMBOL_SHUFFLE, UI_INK_2, 0xffffff, UI_YELLOW
+  },
+  {
+    "whackmole", "lvdemo", "whackmole", LAUNCHER_OPENVELA,
+    "MOLES", "Whack-a-mole from openvela", NULL,
+    LV_SYMBOL_PLAY, UI_INK_2, 0xffffff, UI_ORANGE
+  },
+  {
+    "chess", "lvdemo", "chess", LAUNCHER_OPENVELA,
+    "CHESS", "Chinese chess from openvela", NULL,
+    LV_SYMBOL_LOOP, UI_INK_2, 0xffffff, UI_BLUE
+  },
+  {
+    "lvgl_benchmark", "lvdemo", "benchmark", LAUNCHER_LVGL,
+    "LVGL BENCH", "The official LVGL benchmark", NULL,
+    LV_SYMBOL_CHARGE, UI_PAPER, UI_INK, UI_ORANGE
+  },
+  {
+    "lvgl_widgets", "lvdemo", "widgets", LAUNCHER_LVGL,
+    "WIDGETS", "The standard LVGL widgets", NULL,
+    LV_SYMBOL_LIST, UI_PAPER, UI_INK, UI_BLUE
   },
 };
 
 static const struct launcher_app_s g_about =
 {
-  NULL, "ABOUT", "Port details", NULL,
+  NULL, NULL, NULL, LAUNCHER_TEAM,
+  "ABOUT", "Port details", NULL,
   LV_SYMBOL_LIST, UI_PAPER, UI_INK, UI_INK
 };
+
+static const char * const g_group_names[LAUNCHER_GROUPS] =
+{
+  "TEAM 349", "OPENVELA", "LVGL"
+};
+
+/* CONFIG_LVX_LAUNCHER_APPS split in place, the entries point into it */
+
+static char g_app_list[] = CONFIG_LVX_LAUNCHER_APPS;
+static struct launcher_entry_s g_entries[LAUNCHER_MAX_APPS];
+static int g_nentries = -1;
 
 static const char * const g_about_rows[][2] =
 {
@@ -127,6 +202,7 @@ static lv_obj_t *g_lock;
 static lv_obj_t *g_unlock;
 static lv_obj_t *g_home_scr;
 static lv_obj_t *g_about_scr;
+static lv_obj_t *g_apps_scr;
 static lv_obj_t *g_about_rule;
 static lv_obj_t *g_about_list;
 
@@ -149,7 +225,8 @@ static uint32_t g_frames;
 static int g_fps;                   /* -1 while idle */
 static int32_t g_drag_start;
 static bool g_drag_unlock;
-static int g_launch;
+static int g_launch;                /* Entry to start, -1 for none */
+static bool g_from_apps;            /* Started from the all apps page */
 
 /****************************************************************************
  * Private Functions
@@ -244,54 +321,85 @@ static void launcher_fps_text(char *buf, size_t size, const char *suffix)
  * Name: tiles
  ****************************************************************************/
 
-/* Look of an app on its tile, apps not listed in g_apps get a dark tile
- * with their name.  The result is only valid until the next call.
+/* Resolve CONFIG_LVX_LAUNCHER_APPS once.  An id not in g_apps is a builtin
+ * of that name with a dark tile.  Ids that are not built in are skipped.
  */
 
-static const struct launcher_app_s *launcher_app_info(const char *name)
+static void launcher_load_entries(void)
 {
-  static struct launcher_app_s def;
-  static char title[16];
+  struct launcher_entry_s *e;
+  FAR char *save;
+  FAR char *id;
   int i;
 
-  if (name == NULL)
+  g_nentries = 0;
+  for (id = strtok_r(g_app_list, " ", &save);
+       id != NULL && g_nentries < LAUNCHER_MAX_APPS;
+       id = strtok_r(NULL, " ", &save))
     {
-      return &g_about;
-    }
+      e = &g_entries[g_nentries];
 
-  for (i = 0; i < nitems(g_apps); i++)
-    {
-      if (strcmp(g_apps[i].name, name) == 0)
+      for (i = 0; i < nitems(g_apps) && strcmp(g_apps[i].id, id) != 0;
+           i++);
+
+      if (i < nitems(g_apps))
         {
-          return &g_apps[i];
+          e->app = g_apps[i];
+        }
+      else
+        {
+          for (i = 0; i < sizeof(e->title) - 1 && id[i] != '\0'; i++)
+            {
+              e->title[i] = toupper(id[i]);
+            }
+
+          e->title[i] = '\0';
+          memset(&e->app, 0, sizeof(e->app));
+          e->app.id = id;
+          e->app.group = LAUNCHER_OPENVELA;
+          e->app.title = e->title;
+          e->app.desc = "";
+          e->app.icon = LV_SYMBOL_PLAY;
+          e->app.bg = UI_INK_2;
+          e->app.fg = 0xffffff;
+          e->app.icon_color = 0xffffff;
+        }
+
+      e->index = builtin_isavail(e->app.prog ? e->app.prog : id);
+      if (e->index >= 0)
+        {
+          g_nentries++;
+        }
+    }
+}
+
+static int launcher_find_entry(const char *id)
+{
+  int i;
+
+  for (i = 0; i < g_nentries; i++)
+    {
+      if (strcmp(g_entries[i].app.id, id) == 0)
+        {
+          return i;
         }
     }
 
-  for (i = 0; i < sizeof(title) - 1 && name[i] != '\0'; i++)
-    {
-      title[i] = toupper(name[i]);
-    }
-
-  title[i] = '\0';
-  def.name = name;
-  def.title = title;
-  def.desc = "";
-  def.icon = LV_SYMBOL_PLAY;
-  def.bg = UI_INK_2;
-  def.fg = 0xffffff;
-  def.icon_color = 0xffffff;
-  return &def;
+  return -1;
 }
 
 /* Icon and arrow on top, title and one line of description at the
  * bottom.  The tag goes below the icon on a tall tile, beside it otherwise.
- * A title too wide for the tile gets the smaller font.
+ * Home tiles have Oswald 120 titles, all apps cards Oswald 64; a title too
+ * wide for the tile gets a smaller font.
  */
 
 static void launcher_fill_tile(lv_obj_t *tile,
-                               const struct launcher_app_s *app, bool tall)
+                               const struct launcher_app_s *app, bool tall,
+                               bool card)
 {
-  const lv_font_t *font = UI_OSWALD_120;
+  const lv_font_t *font = card ? UI_OSWALD_64 : UI_OSWALD_120;
+  int32_t base = card ? LAUNCHER_CARD_BASE : LAUNCHER_TITLE_BASE;
   lv_obj_t *obj;
 
   lv_obj_set_style_bg_color(tile, lv_color_hex(app->bg), 0);
@@ -319,20 +427,29 @@ static void launcher_fill_tile(lv_obj_t *tile,
   if (lv_text_get_width(app->title, strlen(app->title), font, 0) >
       lv_obj_get_style_width(tile, 0) - 2 * LAUNCHER_TILE_PAD)
     {
-      font = UI_OSWALD_64;
+      font = card ? UI_OUTFIT_34 : UI_OSWALD_64;
     }
 
   /* The title stands on a baseline above the description */
 
   obj = ui_label(tile, font, app->fg, app->title);
   lv_obj_align(obj, LV_ALIGN_BOTTOM_LEFT, 0,
-               LAUNCHER_TILE_PAD - LAUNCHER_TITLE_BASE + font->base_line);
+               LAUNCHER_TILE_PAD - base + font->base_line);
   obj = ui_label(tile, UI_OUTFIT_26, app->fg, app->desc);
   lv_obj_align(obj, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 }
 
+static lv_obj_t *launcher_tile(lv_obj_t *parent)
+{
+  lv_obj_t *tile = ui_box(parent, 0, UI_RADIUS);
+
+  lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+  return tile;
+}
+
 static void launcher_app_cb(lv_event_t *e)
 {
+  g_from_apps = lv_screen_active() == g_apps_scr;
   g_launch = (int)(intptr_t)lv_event_get_user_data(e);
 }
 
@@ -369,60 +486,71 @@ static int launcher_place_tile(lv_obj_t *tile, int i, int n)
   return row + 1;
 }
 
-/* About is always the second item, the lock strip closes the list */
+/* Pinned apps with About second and ALL APPS last, then the lock strip */
 
 static int32_t launcher_create_tiles(lv_obj_t *parent)
 {
-  char list[] = CONFIG_LVX_LAUNCHER_APPS;
-  const char *names[8];     /* NULL for About */
-  int index[8];
+  static struct launcher_app_s all =
+  {
+    NULL, NULL, NULL, LAUNCHER_TEAM,
+    "ALL APPS", "Team 349, openvela and LVGL", NULL,
+    LV_SYMBOL_DIRECTORY, UI_PAPER, UI_INK, UI_ORANGE
+  };
+
+  static char count[16];
+  char pinned[] = CONFIG_LVX_LAUNCHER_PINNED;
+  int items[8];             /* Entry, -1 About, -2 all apps */
   FAR char *save;
-  FAR char *name;
+  FAR char *id;
   lv_obj_t *tile;
   int32_t y;
   int rows = 0;
   int n = 0;
   int i;
 
-  for (name = strtok_r(list, " ", &save); name != NULL && n < 7;
-       name = strtok_r(NULL, " ", &save))
+  for (id = strtok_r(pinned, " ", &save); id != NULL && n < 6;
+       id = strtok_r(NULL, " ", &save))
     {
-      index[n] = builtin_isavail(name);
-      if (index[n] >= 0)
+      items[n] = launcher_find_entry(id);
+      if (items[n] >= 0)
         {
-          names[n++] = name;
+          n++;
         }
 
       if (n == 1)
         {
-          index[n] = -1;
-          names[n++] = NULL;
+          items[n++] = -1;
         }
     }
 
   if (n == 0)
     {
-      index[n] = -1;
-      names[n++] = NULL;
+      items[n++] = -1;
     }
+
+  items[n++] = -2;
+  snprintf(count, sizeof(count), "%d APPS", g_nentries);
+  all.tag = count;
 
   for (i = 0; i < n; i++)
     {
-      tile = ui_box(parent, 0, UI_RADIUS);
-      lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+      tile = launcher_tile(parent);
       rows = launcher_place_tile(tile, i, n);
-      launcher_fill_tile(tile, launcher_app_info(names[i]),
-                         i == 0 && n >= 3);
+      launcher_fill_tile(tile, items[i] >= 0 ? &g_entries[items[i]].app :
+                         items[i] == -1 ? &g_about : &all,
+                         i == 0 && n >= 3, false);
 
-      if (index[i] < 0)
+      if (items[i] >= 0)
         {
-          lv_obj_add_event_cb(tile, launcher_about_open_cb,
-                              LV_EVENT_CLICKED, NULL);
+          lv_obj_add_event_cb(tile, launcher_app_cb, LV_EVENT_CLICKED,
+                              (void *)(intptr_t)items[i]);
         }
       else
         {
-          lv_obj_add_event_cb(tile, launcher_app_cb, LV_EVENT_CLICKED,
-                              (void *)(intptr_t)index[i]);
+          lv_obj_add_event_cb(tile, items[i] == -1 ?
+                              launcher_about_open_cb :
+                              launcher_apps_open_cb,
+                              LV_EVENT_CLICKED, NULL);
         }
     }
 
@@ -655,6 +783,90 @@ static void launcher_create_about(void)
 }
 
 /****************************************************************************
+ * Name: all apps page
+ *
+ * Every built in entry of CONFIG_LVX_LAUNCHER_APPS, grouped, two cards per
+ * row.  An app started here comes back to this page when it exits.
+ ****************************************************************************/
+
+static void launcher_apps_close_cb(lv_event_t *e)
+{
+  UNUSED(e);
+  lv_screen_load(g_home_scr);
+}
+
+static void launcher_apps_open_cb(lv_event_t *e)
+{
+  UNUSED(e);
+  lv_obj_scroll_to_y(g_apps_scr, 0, LV_ANIM_OFF);
+  lv_screen_load(g_apps_scr);
+}
+
+static void launcher_create_apps(void)
+{
+  lv_obj_t *scr = launcher_screen();
+  lv_obj_t *obj;
+  int32_t y = 380;
+  int group;
+  int n;
+  int i;
+
+  lv_obj_set_pos(ui_back(scr, UI_INK, launcher_apps_close_cb), UI_MARGIN,
+                 56);
+  obj = launcher_right(ui_tag(scr, UI_DIM, ""), UI_OUTFIT_26, UI_MARGIN, 98);
+  lv_label_set_text_fmt(obj, "%d INSTALLED", g_nentries);
+  ui_place(ui_label(scr, UI_OSWALD_120, UI_INK, "APPS"), UI_OSWALD_120,
+           UI_MARGIN, 212);
+
+  for (group = 0; group < LAUNCHER_GROUPS; group++)
+    {
+      n = 0;
+      for (i = 0; i < g_nentries; i++)
+        {
+          if (g_entries[i].app.group != group)
+            {
+              continue;
+            }
+
+          /* Group title and a thin rule before its first card */
+
+          if (n == 0)
+            {
+              ui_place(ui_tag(scr, UI_DIM, g_group_names[group]),
+                       UI_OUTFIT_26, UI_MARGIN, y);
+              obj = ui_box(scr, UI_RULE, 0);
+              lv_obj_set_pos(obj, UI_MARGIN, y + 44);
+              lv_obj_set_size(obj, UI_CONTENT_W, 2);
+              y += 70;
+            }
+
+          obj = launcher_tile(scr);
+          lv_obj_set_pos(obj, UI_MARGIN + n % 2 * (LAUNCHER_HALF_W + UI_GAP),
+                         y);
+          lv_obj_set_size(obj, LAUNCHER_HALF_W, LAUNCHER_CARD_H);
+          launcher_fill_tile(obj, &g_entries[i].app, false, true);
+          lv_obj_add_event_cb(obj, launcher_app_cb, LV_EVENT_CLICKED,
+                              (void *)(intptr_t)i);
+
+          y += n % 2 ? LAUNCHER_CARD_H + UI_GAP : 0;
+          n++;
+        }
+
+      y += n % 2 ? LAUNCHER_CARD_H + UI_GAP : 0;
+      y += n > 0 ? 36 : 0;
+    }
+
+  /* Room below the last card when the page scrolls */
+
+  obj = lv_obj_create(scr);
+  lv_obj_remove_style_all(obj);
+  lv_obj_set_pos(obj, 0, y);
+  lv_obj_set_size(obj, 1, UI_GAP);
+
+  g_apps_scr = scr;
+}
+
+/****************************************************************************
  * Name: lock screen
  *
  * The lock lives on the top layer over the home screen.  Dragging the
@@ -801,8 +1013,8 @@ static void launcher_periodic_cb(lv_timer_t *timer)
   clock_gettime(CLOCK_MONOTONIC, &ts);
   sec = ts.tv_sec;
 
-  g_fps = lv_display_get_inactive_time(NULL) > LAUNCHER_IDLE_TIME ?
-          -1 : (int)g_frames;
+  g_fps = lv_display_get_inactive_time(NULL) > LAUNCHER_IDLE_TIME &&
+          g_frames <= LAUNCHER_IDLE_FRAMES ? -1 : (int)g_frames;
   g_frames = 0;
 
   snprintf(text, sizeof(text), "%02u", sec / 3600 % 100);
@@ -831,7 +1043,7 @@ static void launcher_periodic_cb(lv_timer_t *timer)
   ui_num_set(g_about_fps, text, anim);
 }
 
-/* "last" is the app that just exited, or -1 on boot */
+/* "last" is the entry that just exited, or -1 on boot */
 
 static int launcher_start(int last)
 {
@@ -850,9 +1062,16 @@ static int launcher_start(int last)
 
   lv_display_add_event_cb(g_result.disp, launcher_render_cb,
                           LV_EVENT_RENDER_READY, NULL);
+  ui_hide_perf();
+
+  if (g_nentries < 0)
+    {
+      launcher_load_entries();
+    }
 
   g_fps = -1;
   launcher_create_about();
+  launcher_create_apps();
   launcher_create_home();
   launcher_create_lock();
   lv_screen_load(g_home_scr);
@@ -860,12 +1079,19 @@ static int launcher_start(int last)
   launcher_periodic_cb(NULL);
   lv_timer_create(launcher_periodic_cb, 1000, NULL);
 
-  /* Back from an app: straight to the home screen */
+  /* Back from an app: to the page it was started from */
 
   if (last >= 0)
     {
       lv_obj_add_flag(g_lock, LV_OBJ_FLAG_HIDDEN);
-      launcher_home_intro();
+      if (g_from_apps)
+        {
+          lv_screen_load(g_apps_scr);
+        }
+      else
+        {
+          launcher_home_intro();
+        }
     }
 
   return 0;
@@ -884,6 +1110,7 @@ static void launcher_stop(void)
 int main(int argc, FAR char *argv[])
 {
   FAR const struct builtin_s *app;
+  FAR char *args[2];
   uint32_t idle;
   int last = -1;
   pid_t pid;
@@ -912,9 +1139,11 @@ int main(int argc, FAR char *argv[])
       launcher_stop();
 
       last = g_launch;
-      app = builtin_for_index(last);
+      app = builtin_for_index(g_entries[last].index);
+      args[0] = (FAR char *)g_entries[last].app.arg;
+      args[1] = NULL;
       pid = task_create(app->name, app->priority, app->stacksize, app->main,
-                        NULL);
+                        args[0] ? args : NULL);
       if (pid < 0)
         {
           fprintf(stderr, "launcher: start %s failed: %d\n", app->name,
