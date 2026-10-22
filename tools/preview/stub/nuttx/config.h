@@ -15,7 +15,6 @@
 #  define CONFIG_LVX_LAUNCHER_PINNED "paint bench monitor"
 #endif
 
-#define CONFIG_LV_DEF_REFR_PERIOD 33
 #define CONFIG_SMP_NCPUS 4
 
 #endif /* __TOOLS_PREVIEW_STUB_NUTTX_CONFIG_H */

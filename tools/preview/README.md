@@ -12,10 +12,16 @@
 - 每帧耗时在预览里是 0，帧率和跑分以板上为准
 
 ```bash
-make LVGL_DIR=<apps_graphics_lvgl> run
+make LVGL_DIR=<apps_graphics_lvgl> DEMOS_DIR=<packages/demos 的拷贝> run
 python3 compare.py      # out/compare/：参考图 | 预览 | 差异，并打印平均差值
 ```
 
 除了参考图同名的截图，还有锁屏回弹（`1b`）、重新锁屏（`1c`）、跑分第二页
-（`5d`）、monitor（`6`），以及 0–5 个应用时的桌面排布（`layout-*`）。
+（`5d`）、monitor（`6`）、全部应用页（`7`）、touch（`8`）、lvdemo 的四个示例
+（`9`），以及 0–5 个应用时的桌面排布（`layout-*`）。lvdemo 要用到
+`packages/demos` 里的贪吃蛇和打地鼠源码（`DEMOS_DIR`），它们只在编译机的
+工作区里，按 CONNECT.md 2b 节取回本机。
+
+bench 场景会把 500 张 MNIST 样本用手写的 C 推理跑一遍，打印认对的张数；lvdemo
+场景会在打地鼠进行中退出再启动一次，检查静态变量清零。
 launcher 场景最后会退出再启动 10 次并打印 LVGL 堆的剩余，检查有没有泄漏。
