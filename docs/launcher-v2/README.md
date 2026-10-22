@@ -21,6 +21,10 @@
 3. bench：换新风格，加**LVGL 渲染场景跑分**和 **CoreMark**，原来的 CPU/内存测试和测试图保留。
 4. 新增 monitor 应用：显示 4 个核的实时负载、任务列表、内存。
 5. 帧率：目前被刷新周期卡在 30 FPS，要能配置，并且查清楚到 60 FPS 的瓶颈在哪。
+6. 新增"全部应用"页，桌面只放主推应用。
+7. 手写识别改用 openvela 自带的 TFLite Micro，手写推理保留作对照。
+8. 接入 LVGL 官方示例（benchmark、widgets）和 2–3 个 openvela 自带应用。
+9. 新增 touch 应用，展示触控效果。
 
 驱动和板级代码不在这次范围内，除非是为了帧率做的必要改动（要单独提交）。
 
@@ -89,13 +93,14 @@ bench 和 monitor 是深色页，背景用 INK，按钮和条形图底色用 INK
 2. 黑色大卡片 `UPTIME CLOCK`，右上角 `NuttX / openvela`；中间是 `HH:MM` 大数字，秒数用橙色上标。
 3. 两张半宽卡片：黄色 `HEAP FREE`（剩余堆，单位 M）、蓝色 `FRAMES / S`（实时帧率）。
 4. 一张白色通栏 `UPTIME`，显示 `5h 28m` 这种格式。
-5. 应用磁贴区，按 `CONFIG_LVX_LAUNCHER_APPS` 生成。参考图里 PAINT 是左边的橙色竖长磁贴，ABOUT 和 BENCH 在右边上下排。
+5. 主推应用磁贴区，按 `CONFIG_LVX_LAUNCHER_PINNED` 生成（默认 `"paint bench monitor"`）。参考图里 PAINT 是左边的橙色竖长磁贴，ABOUT 和 BENCH 在右边上下排；加上 MONITOR 和 `ALL APPS` 以后，排布要重新安排，但风格不变。
+6. 一个 `ALL APPS` 磁贴，显示已安装应用的数量，点进去是"全部应用"页（见 4.7）。
 
-应用磁贴要显示**图标、名字（Oswald 大写）、一行说明**，右上角有一个 `>` 箭头，可以带一个小标签（比如 PAINT 上的 `AI DIGITS`）。这些信息现在 launcher 里拿不到，需要设计一个办法让每个应用提供自己的颜色、图标、说明和标签。比如在 launcher 里维护一张按应用名查的表，查不到的应用用默认样式。应用数量变化时，磁贴排布要能自适应：1 到 5 个应用都不能排乱，超出的部分可以滚动。
+应用磁贴要显示**图标、名字（Oswald 大写）、一行说明**，右上角有一个 `>` 箭头，可以带一个小标签（比如 PAINT 上的 `AI DIGITS`）。这些信息现在 launcher 里拿不到，需要设计一个办法让每个应用提供自己的颜色、图标、说明、标签、分组，以及启动参数（见 4.9）。比如在 launcher 里维护一张按应用名查的表，查不到的应用用默认样式。主推应用数量变化时排布不能乱，1 到 5 个都要排得好看。
 
 About 是 launcher 内部的页面，不是独立应用，但在桌面上和应用磁贴并排显示。
 
-帧率的定义：每秒统计 LVGL 实际刷新（refresh）完成的次数，不是定时器触发的次数。
+帧率的定义：每秒统计 LVGL 实际刷新（refresh）完成的次数，不是定时器触发的次数。画面静止时 LVGL 不会重画，这时候显示 `IDLE`，不要显示个位数的帧率；有动画或触摸时再显示实时数字。真实的帧率上限放到 bench 里测。
 
 ### 4.3 About（launcher）
 
@@ -159,6 +164,57 @@ About 是 launcher 内部的页面，不是独立应用，但在桌面上和应�
 - 作用是在答辩现场直观地展示 SMP 4 个核都在工作，也方便调试帧率。
 - 加到 `CONFIG_LVX_LAUNCHER_APPS` 里，从桌面启动。
 
+### 4.7 全部应用（launcher）
+
+应用会越来越多，桌面上只放主推的几个，其余的都放在这一页。没有参考图，按桌面的浅色风格做：
+
+- 顶部：返回按钮、大标题 `APPS`、右边显示应用总数。
+- 按分组列出，每组一个小号大写的组标题和一条细分隔线：
+  - `TEAM 349`：本队写的应用（paint、bench、monitor、touch）
+  - `OPENVELA`：openvela 自带的应用（见 4.10）
+  - `LVGL`：LVGL 官方示例（见 4.9）
+- 每个应用一张半宽卡片，两列排列。卡片上有图标、名字、一行说明，用应用自己的颜色；整页可以上下滚动。
+- 列表来自 `CONFIG_LVX_LAUNCHER_APPS`，没有编进镜像的应用自动跳过，这一点和现在一样。
+- 点卡片启动应用，应用退出后回到这一页，而不是回到桌面。
+
+### 4.8 手写识别改用 TFLite Micro（paint）
+
+工作区自带 TFLite Micro（`apps/mlearning/tflite-micro`，配置开关 `CONFIG_TFLITEMICRO`）。我们希望识别用 openvela 自带的这套框架来跑，而不是自己手写推理：
+
+- 模型结构不变（784→128→10）。用同样的数据和增强方法训练，转成**全 int8 量化**的 `.tflite`（输入和输出也是 int8），再转成 C 数组编进镜像。
+- 推理走 TFLM 的 `MicroInterpreter`，只注册用得到的算子（FullyConnected、Relu、Softmax 之类），tensor arena 尽量小。
+- **自己手写的推理也保留**，作为对照：在 bench 里加一项，比较两种实现单次推理的耗时，以及在同一批测试样本上的准确率。
+- 训练和转换要用 TensorFlow，在本机的 Python 虚拟环境里装，不进仓库。转换脚本和说明放在 `app/paint/tools/`。
+- 先确认 TFLM 能在 arm64 上编过，并且不会和 C++ 运行时、栈大小、内存冲突。如果 TFLM 怎么都接不进来，就先保留手写版本，把遇到的问题记录下来。
+
+### 4.9 LVGL 官方示例（新应用 lvdemo）
+
+LVGL 自带的示例不是独立程序，需要一个很薄的包装应用 `lvdemo`，按启动参数运行对应的示例，退出时照常释放 LVGL，回到 launcher：
+
+- `lvdemo benchmark`：LVGL 官方性能测试。这是业界通用的标准分数，能和其它开发板直接比较。跑完以后把总分和各项结果同时打到串口上，方便记录。
+- `lvdemo widgets`：标准控件全家桶，证明显示和触摸能支撑通用的 UI。
+- 还需要一个退出的办法：示例本身没有返回按钮，可以在屏幕角落叠一个小的返回按钮，或者用一个手势退出。
+- launcher 要支持**带参数启动应用**：在全部应用页里，`LVGL BENCHMARK` 和 `LVGL WIDGETS` 是两张卡片，底层都启动 `lvdemo`，只是参数不同。
+- 需要的配置：`CONFIG_LV_USE_DEMO_BENCHMARK`、`CONFIG_LV_USE_DEMO_WIDGETS`，以及它们依赖的字体。
+
+### 4.10 openvela 自带应用
+
+`packages/demos/` 下有不少不联网的应用，挑 2–3 个接进全部应用页，展示"openvela 生态里现成的应用能直接在我们的移植上跑"：
+
+- 候选：计算器（calculator）、中国象棋（Chinese_Chess）、打地鼠（Whackmole）、贪吃蛇（snake_game）、木鱼（wooden_fish）。
+- 要逐个验证：在 1080×1920 下布局是否正常（很多是按小屏设计的，可能需要缩放或居中）；能不能正常退出并回到 launcher；退出后内存有没有泄漏。
+- 原则上**不改这些应用的源码**。确实需要改的话，改动要尽量小，单独提交，提交说明里写清楚原因。改不动的就不接。
+- 需要联网或音频的应用（ai_chat、mimo、bailian、mini_memo、x_track 等）这次不接，板子上还没有网口和音频驱动。
+
+### 4.11 触摸测试（新应用 touch）
+
+触控是这次移植的难点之一，做一个应用把它直观地展示出来，按 bench 的深色风格：
+
+- 手指按下的位置画一个圆点，移动时留下轨迹，抬起后轨迹慢慢淡出。驱动支持多点的话，每根手指用不同颜色。
+- 屏幕上方显示实时坐标、报点率（每秒收到多少个触摸事件）、当前触点数。
+- 一个"校准检查"模式：在屏幕四角和中心依次显示十字靶，点一下就记录偏差，最后给出平均偏差。
+- 返回按钮放在不容易误触的地方。
+
 ## 五、帧率
 
 现在的情况：
@@ -177,9 +233,10 @@ About 是 launcher 内部的页面，不是独立应用，但在桌面上和应�
 
 ## 六、构建和配置
 
-- 三个应用都要同时支持 Make 和 CMake（`Makefile`、`Make.defs`、`CMakeLists.txt`、`Kconfig`），和现有应用保持一致。
+- 所有应用都要同时支持 Make 和 CMake（`Makefile`、`Make.defs`、`CMakeLists.txt`、`Kconfig`），和现有应用保持一致。
 - 字库、模型这些生成出来的 C 文件和用到它的应用放在一起，生成脚本放进该应用的 `tools/` 子目录。几个应用共用的字库和配色，要想办法只放一份（比如放进 launcher，或者单独做一个公共目录），不要每个应用复制一遍。
-- 板级 `configs/nsh/defconfig` 的改动单独提交，`LVX_LAUNCHER_APPS` 加上 monitor。
+- 板级 `configs/nsh/defconfig` 的改动单独提交。`LVX_LAUNCHER_APPS` 加上 monitor、touch、lvdemo 和选中的 openvela 应用；新增 `LVX_LAUNCHER_PINNED` 指定桌面上的主推应用；打开 `CONFIG_TFLITEMICRO` 和需要的 LVGL 示例开关。
+- 新加的应用都按现有方式，在 manifest 里加 linkfile 接进编译。
 - 代码风格遵循 NuttX 的 nxstyle，提交前检查一遍。
 - 每个应用的 README 更新成新的功能说明。
 
@@ -187,7 +244,12 @@ About 是 launcher 内部的页面，不是独立应用，但在桌面上和应�
 
 - [ ] 开机自动进锁屏，三种解锁方式都能用，拖不够时会弹回
 - [ ] 桌面的数字每秒更新，FPS 是真实刷新次数
-- [ ] 桌面磁贴按应用列表生成，增减应用后排布不乱
+- [ ] 桌面主推磁贴按 `LVX_LAUNCHER_PINNED` 生成，增减应用后排布不乱
+- [ ] 全部应用页分组显示所有已编入的应用，能滚动，启动的应用退出后回到这一页
+- [ ] 手写识别跑在 TFLite Micro 上；bench 里有 TFLM 和手写版本的耗时与准确率对比
+- [ ] `lvdemo benchmark` 能跑完并在串口打出分数；`lvdemo widgets` 能操作、能退出
+- [ ] 接进来的 openvela 应用布局正常，能退出回到 launcher
+- [ ] touch 应用能显示轨迹、坐标和报点率，校准检查能给出偏差
 - [ ] 每个应用都能打开、退出、再打开，反复 10 次不崩溃，内存不持续下降
 - [ ] 手写 0–9 大部分能认对，结果卡片显示完整
 - [ ] bench 能跑完 5 个场景并给出 CoreMark 分数
