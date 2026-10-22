@@ -9,5 +9,9 @@ config LVX_USE_DEMO_BENCH
 	depends on GRAPHICS_LVGL
 	select LV_USE_NUTTX
 	select LV_USE_NUTTX_TOUCHSCREEN
+	select LVX_UI
 	---help---
-		CPU, memory and display benchmark.
+		LVGL render scenes with real frame rate and frame time, CoreMark
+		on one core, CPU / memory throughput and screen test patterns.
+		CoreMark needs BENCHMARK_COREMARK and PIPES, without them it
+		shows N/A.
