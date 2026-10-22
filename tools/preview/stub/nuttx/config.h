@@ -8,7 +8,7 @@
 #define __TOOLS_PREVIEW_STUB_NUTTX_CONFIG_H
 
 #define CONFIG_LVX_LAUNCHER_APPS "paint bench monitor touch snake " \
-                                 "whackmole chess lvgl_benchmark " \
+                                 "whackmole lvgl_benchmark " \
                                  "lvgl_widgets"
 
 #ifndef CONFIG_LVX_LAUNCHER_PINNED

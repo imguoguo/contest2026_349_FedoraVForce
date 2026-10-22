@@ -9,6 +9,9 @@
  * ones in CONFIG_LVX_LAUNCHER_PINNED.  LVGL is a single global instance,
  * so the launcher releases it before starting an app and initializes it
  * again after the app exits.
+ *
+ * With PIPES, "echo <id> [argument] > /dev/launcher" in NSH starts an app
+ * too, e.g. "echo bench run > /dev/launcher".
  ****************************************************************************/
 
 /****************************************************************************
@@ -18,10 +21,12 @@
 #include <nuttx/config.h>
 
 #include <sys/param.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <malloc.h>
 #include <sched.h>
 #include <stdio.h>
@@ -59,6 +64,12 @@
 #define LAUNCHER_FLOAT_DIST   40
 #define LAUNCHER_FLOAT_TIME   800
 #define LAUNCHER_LIFT_TIME    350
+
+/* "echo bench run > /dev/launcher" starts an entry from the console */
+
+#define LAUNCHER_FIFO         "/dev/launcher"
+#define LAUNCHER_FIFO_POLL    200
+#define LAUNCHER_FIFO_ARGS    4
 
 /* The FPS counters show IDLE after a second without touch in which only
  * the clock rolled, about one roll worth of frames.
@@ -152,11 +163,6 @@ static const struct launcher_app_s g_apps[] =
     LV_SYMBOL_PLAY, UI_INK_2, 0xffffff, UI_ORANGE
   },
   {
-    "chess", "lvdemo", "chess", LAUNCHER_OPENVELA,
-    "CHESS", "Chinese chess from openvela", NULL,
-    LV_SYMBOL_LOOP, UI_INK_2, 0xffffff, UI_BLUE
-  },
-  {
     "lvgl_benchmark", "lvdemo", "benchmark", LAUNCHER_LVGL,
     "LVGL BENCH", "The official LVGL benchmark", NULL,
     LV_SYMBOL_CHARGE, UI_PAPER, UI_INK, UI_ORANGE
@@ -227,6 +233,9 @@ static int32_t g_drag_start;
 static bool g_drag_unlock;
 static int g_launch;                /* Entry to start, -1 for none */
 static bool g_from_apps;            /* Started from the all apps page */
+static int g_fifo = -1;
+static char g_fifo_line[64];
+static FAR char *g_fifo_args[LAUNCHER_FIFO_ARGS];  /* Replace app.arg */
 
 /****************************************************************************
  * Private Functions
@@ -451,6 +460,50 @@ static void launcher_app_cb(lv_event_t *e)
 {
   g_from_apps = lv_screen_active() == g_apps_scr;
   g_launch = (int)(intptr_t)lv_event_get_user_data(e);
+}
+
+/* A line "<id> [arguments]" written to LAUNCHER_FIFO starts that entry as
+ * if its tile was tapped, so the apps can be run without touching the
+ * screen.  Arguments given replace the one of the entry.  The pipe stays
+ * open while the app runs, a line written then is read when the launcher
+ * is back.
+ */
+
+static void launcher_fifo_cb(lv_timer_t *timer)
+{
+  FAR char *save;
+  FAR char *id;
+  ssize_t n;
+  int i;
+  int j;
+
+  UNUSED(timer);
+
+  n = read(g_fifo, g_fifo_line, sizeof(g_fifo_line) - 1);
+  if (n <= 0)
+    {
+      return;
+    }
+
+  g_fifo_line[n] = '\0';
+  id = strtok_r(g_fifo_line, " \r\n", &save);
+  i = id != NULL ? launcher_find_entry(id) : -1;
+  if (i < 0)
+    {
+      fprintf(stderr, "launcher: no app %s\n", id != NULL ? id : "");
+      return;
+    }
+
+  g_fifo_args[0] = strtok_r(NULL, " \r\n", &save);
+  for (j = 1; j < LAUNCHER_FIFO_ARGS - 1 && g_fifo_args[j - 1] != NULL;
+       j++)
+    {
+      g_fifo_args[j] = strtok_r(NULL, " \r\n", &save);
+    }
+
+  g_fifo_args[j] = NULL;
+  g_from_apps = false;
+  g_launch = i;
 }
 
 /* With three or more items the first is a tall tile on the left and the
@@ -1078,6 +1131,10 @@ static int launcher_start(int last)
 
   launcher_periodic_cb(NULL);
   lv_timer_create(launcher_periodic_cb, 1000, NULL);
+  if (g_fifo >= 0)
+    {
+      lv_timer_create(launcher_fifo_cb, LAUNCHER_FIFO_POLL, NULL);
+    }
 
   /* Back from an app: to the page it was started from */
 
@@ -1111,6 +1168,7 @@ int main(int argc, FAR char *argv[])
 {
   FAR const struct builtin_s *app;
   FAR char *args[2];
+  FAR char **argp;
   uint32_t idle;
   int last = -1;
   pid_t pid;
@@ -1123,6 +1181,11 @@ int main(int argc, FAR char *argv[])
       fprintf(stderr, "launcher: LVGL is busy\n");
       return 1;
     }
+
+#ifdef CONFIG_PIPES
+  mkfifo(LAUNCHER_FIFO, 0666);
+  g_fifo = open(LAUNCHER_FIFO, O_RDONLY | O_NONBLOCK);
+#endif
 
   while (launcher_start(last) == 0)
     {
@@ -1142,8 +1205,11 @@ int main(int argc, FAR char *argv[])
       app = builtin_for_index(g_entries[last].index);
       args[0] = (FAR char *)g_entries[last].app.arg;
       args[1] = NULL;
+      argp = g_fifo_args[0] != NULL ? g_fifo_args :
+             args[0] != NULL ? args : NULL;
       pid = task_create(app->name, app->priority, app->stacksize, app->main,
-                        args[0] ? args : NULL);
+                        argp);
+      g_fifo_args[0] = NULL;
       if (pid < 0)
         {
           fprintf(stderr, "launcher: start %s failed: %d\n", app->name,
