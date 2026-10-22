@@ -12,12 +12,9 @@
 - 每帧耗时在预览里是 0，帧率和跑分以板上为准
 
 ```bash
-make LVGL_DIR=<apps_graphics_lvgl> FONT_DIR=<放 Oswald[wght].ttf 和 Outfit[wght].ttf 的目录> run
+make LVGL_DIR=<apps_graphics_lvgl> run
 python3 compare.py      # out/compare/：参考图 | 预览 | 差异，并打印平均差值
 ```
-
-`app/ui/fonts` 还没有生成时，`ttf2lv.py` 用 Pillow 从可变字体生成同样格式的
-字库，只给预览用（没有字偶距调整）。
 
 除了参考图同名的截图，还有锁屏回弹（`1b`）、重新锁屏（`1c`）、跑分第二页
 （`5d`）、monitor（`6`），以及 0–5 个应用时的桌面排布（`layout-*`）。

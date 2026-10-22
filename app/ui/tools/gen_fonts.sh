@@ -4,13 +4,14 @@
 #
 # Regenerate the Oswald / Outfit C fonts in app/ui/fonts.
 #
-# Needs python3 with fontTools and lv_font_conv 1.5.3.  The fonts come from
+# Needs python3 with fontTools and lv_font_conv (1.5.2, installed globally
+# with npm or pnpm).  The fonts come from
 # https://github.com/google/fonts (ofl/oswald, ofl/outfit), both are
 # variable fonts, a static instance is cut for each weight first.
 #
 #   gen_fonts.sh <Oswald[wght].ttf> <Outfit[wght].ttf>
 #
-# LV_FONT_CONV overrides the converter, default "npx lv_font_conv@1.5.3".
+# LV_FONT_CONV overrides the converter command, default "lv_font_conv".
 ############################################################################
 
 set -e
@@ -18,7 +19,7 @@ set -e
 OSWALD=$1
 OUTFIT=$2
 OUT=$(cd "$(dirname "$0")/../fonts" && pwd)
-CONV=${LV_FONT_CONV:-npx lv_font_conv@1.5.3}
+CONV=${LV_FONT_CONV:-lv_font_conv}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/gen_fonts.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
@@ -32,13 +33,13 @@ instance()
   python3 -m fontTools.varLib.instancer -q -o "$TMP/$2.ttf" "$1" "wght=$3"
 }
 
-# name font size characters
+# name font size characters, the C name comes from the file name
 
 convert()
 {
-  $CONV --no-compress --no-prefilter --bpp 4 --format lvgl --lv-include lvgl/lvgl.h \
-        --font "$TMP/$2.ttf" --size "$3" --symbols "$4" \
-        --lv-font-name "$1" -o "$OUT/$1.c"
+  $CONV --no-compress --no-prefilter --bpp 4 --format lvgl \
+        --lv-include lvgl/lvgl.h --font "$TMP/$2.ttf" --size "$3" \
+        --symbols "$4" -o "$OUT/$1.c"
 }
 
 UPPER="ABCDEFGHIJKLMNOPQRSTUVWXYZ"

@@ -32,13 +32,8 @@
 
 ## 需要决定
 
-- [ ] **字库转换工具**。README 要求用 lv_font_conv，但本机 npm 源不在网络白名单
-  里，从 GitHub 拼起来的 lv_font_conv 又被禁止在本机执行。二选一：放行
-  lv_font_conv（`app/ui/tools/gen_fonts.sh` 已写好），或者改用 fontTools +
-  Pillow 写的转换脚本（`tools/preview/ttf2lv.py` 就是，目前只给预览用）。字库
-  生成前，板上镜像里的 Oswald/Outfit 都是 Montserrat 占位
-- [ ] **镜像传到 TFTP**。`scp -3 vela-build:… vela-tftp:…` 和 CONNECT.md 写法一致，
-  但不在沙箱白名单里
+- [x] **字库转换工具**：用全局安装的 lv_font_conv 1.5.2 生成（10/22）
+- [x] **镜像传到 TFTP**：`scp -3` 已经可以用（10/22）
 - [ ] **清华 PyPI 镜像**：`pypi.tuna.tsinghua.edu.cn` 仍被拦（可能白名单写的是
   别的域名）。目前用 pypi.org 装 TensorFlow
 - [ ] **驱动只拷脏区域的列**（帧率第 2 项的一部分）在 `arch/arm64/src/s6`，要

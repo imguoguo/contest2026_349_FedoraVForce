@@ -16,7 +16,7 @@ launcher、paint、bench、monitor 共用的外观，不是独立应用。由用
 ## 字库
 
 Oswald（数字、标题）和 Outfit（正文）都是 SIL OFL 1.1，许可证全文在
-`fonts/OFL-*.txt`。字库由 `tools/gen_fonts.sh` 用 lv_font_conv 1.5.3 从
+`fonts/OFL-*.txt`。字库由 `tools/gen_fonts.sh` 用 lv_font_conv 1.5.2 从
 [google/fonts](https://github.com/google/fonts) 的可变字体生成（先用
 fontTools 切出静态字重），4 bpp、不压缩，只转用得到的字符：
 
@@ -32,6 +32,7 @@ fontTools 切出静态字重），4 bpp、不压缩，只转用得到的字符�
 large 格式，300px 的 Oswald 数字是 252px。
 
 ```bash
+npm install -g lv_font_conv@1.5.2     # 或 pnpm add -g
 pip install fonttools
 app/ui/tools/gen_fonts.sh 'Oswald[wght].ttf' 'Outfit[wght].ttf'
 ```
