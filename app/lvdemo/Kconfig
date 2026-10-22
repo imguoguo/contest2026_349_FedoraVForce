@@ -1,0 +1,19 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config LVX_USE_DEMO_LVDEMO
+	bool "LVGL demos and openvela apps"
+	default n
+	depends on GRAPHICS_LVGL
+	depends on !LVX_USE_DEMO_SNAKE_GAME && !LVX_USE_DEMO_WHACKMOLE
+	select LV_USE_NUTTX
+	select LV_USE_NUTTX_TOUCHSCREEN
+	select LVX_UI
+	---help---
+		"lvdemo <demo>" runs the LVGL benchmark (LV_USE_DEMO_BENCHMARK)
+		or widgets (LV_USE_DEMO_WIDGETS) demo, or the snake game or
+		whack-a-mole of packages/demos, with a back button.  Those two
+		are built into lvdemo, so their own options must stay off.
+		The benchmark summary goes to the console with LV_USE_LOG.

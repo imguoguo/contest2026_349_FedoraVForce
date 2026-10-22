@@ -1,0 +1,7 @@
+############################################################################
+# app/lvdemo/Make.defs
+############################################################################
+
+ifneq ($(CONFIG_LVX_USE_DEMO_LVDEMO),)
+CONFIGURED_APPS += $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+endif
