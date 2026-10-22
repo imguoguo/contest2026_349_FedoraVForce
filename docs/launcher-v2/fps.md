@@ -84,3 +84,16 @@ CoreMark 10847 iterations/s（-O0 是 2233，4.9 倍）。镜像 2.69MB → 2.23
 
 CoreMark 10824 iterations/s，和 33ms 时一样，界面多刷新的那些帧没有拖慢它
 （它在 CPU3 上）。每帧耗时没变，FPS 翻倍到 58，被 16ms 周期卡住。
+
+## 5. 下一步（还没上板）
+
+- NEON（`LV_USE_DRAW_SW_ASM`）：这版 LVGL（9.1）的 NEON 实现只有
+  `src/draw/sw/blend/neon/lv_blend_neon.S` 一个文件，是 ARMv7 的汇编
+  （`.arch armv7a`，用 r0–r10、d/q 寄存器），A510 跑的是 AArch64，汇编不了。
+  要用 NEON 得自己写 AArch64 版本，这一步先跳过
+- 多渲染单元（`LV_OS_PTHREAD` + `LV_DRAW_SW_DRAW_UNIT_CNT=4`）：只能并行渲染
+  那一段，flush（驱动拷贝）不会变。按第 4 节的数据，渲染那一段从
+  Rectangles 的 0.6ms 到 Arcs 的 4.7ms，收益最多就是这么多。这个配置编过了
+  （0 warning），镜像在编译机 `~/contest2026/s6-nuttx-drawunits4.bin`，等上板
+  用 `echo bench run > /dev/launcher` 记数据
+- 驱动只拷脏区域的列：flush 才是大头，见上面第 2 节
