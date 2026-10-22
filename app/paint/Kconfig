@@ -9,5 +9,7 @@ config LVX_USE_DEMO_PAINT
 	depends on GRAPHICS_LVGL
 	select LV_USE_NUTTX
 	select LV_USE_NUTTX_TOUCHSCREEN
+	select LVX_UI
 	---help---
-		Full screen finger paint app.
+		Full screen finger paint with on-device handwritten digit
+		recognition (784-128-10 MLP trained on MNIST, runs on the CPU).
