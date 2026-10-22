@@ -12,6 +12,7 @@
 #include <nuttx/config.h>
 
 #include <stdint.h>
+#include <nuttx/arch.h>
 #include <nuttx/board.h>
 
 #include <syslog.h>
@@ -74,6 +75,19 @@ int board_app_initialize(uintptr_t arg)
 {
   UNUSED(arg);
   return OK;
+}
+#endif
+
+/* BL31 implements PSCI SYSTEM_RESET, which brings the board back to
+ * U-Boot.
+ */
+
+#ifdef CONFIG_BOARDCTL_RESET
+int board_reset(int status)
+{
+  UNUSED(status);
+  up_systemreset();
+  return 0;
 }
 #endif
 
