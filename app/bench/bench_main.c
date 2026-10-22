@@ -5,7 +5,11 @@
  *
  * Five render scenes that count real display refreshes and time each
  * frame, CoreMark on one core, and on a second page the CPU / memory
- * throughput tests and screen test patterns.
+ * throughput tests, the two digit recognition implementations of paint
+ * side by side and screen test patterns.
+ *
+ * "bench run" starts the run right away, then does the CPU page tests too
+ * and exits, so the numbers can be taken from the console alone.
  ****************************************************************************/
 
 /****************************************************************************
@@ -28,6 +32,7 @@
 
 #include <lvgl/lvgl.h>
 
+#include "digit.h"
 #include "lvx_ui.h"
 
 #if defined(CONFIG_BENCHMARK_COREMARK) && defined(CONFIG_PIPES)
@@ -57,6 +62,7 @@
 #define BENCH_MEM_SIZE        (4 * 1024 * 1024)
 #define BENCH_GRID_STEP       120
 #define BENCH_PATTERNS        (nitems(g_pattern_colors) + 2)
+#define BENCH_DIGIT_Y         1000
 
 /****************************************************************************
  * Private Types
@@ -67,6 +73,12 @@ struct bench_scene_s
   const char *name;
   void (*create)(lv_obj_t *scr);
   void (*update)(lv_obj_t *scr, uint32_t t);
+};
+
+struct bench_digit_s
+{
+  const char *name;
+  int (*classify)(const float *img, float *prob);
 };
 
 struct bench_test_s
@@ -95,6 +107,7 @@ static void bench_int(void);
 static void bench_float(void);
 static void bench_memcpy(void);
 static void bench_memset(void);
+static void bench_cpu_cb(lv_event_t *e);
 
 /****************************************************************************
  * Private Data
@@ -123,6 +136,16 @@ static const struct bench_test_s g_tests[] =
   { "Memory fill", bench_memset, BENCH_MEM_SIZE, "MB/s" },
 };
 
+/* TFLite Micro first, it is what paint uses */
+
+static const struct bench_digit_s g_digits[] =
+{
+#ifdef CONFIG_TFLITEMICRO
+  { "TFLite Micro", digit_tflm_classify },
+#endif
+  { "Plain C", digit_classify },
+};
+
 static const uint32_t g_pattern_colors[] =
 {
   0xff0000, 0x00ff00, 0x0000ff, 0xffffff, 0x000000
@@ -131,6 +154,7 @@ static const uint32_t g_pattern_colors[] =
 static float g_mat_a[BENCH_MATRIX_N][BENCH_MATRIX_N];
 static float g_mat_b[BENCH_MATRIX_N][BENCH_MATRIX_N];
 static float g_mat_c[BENCH_MATRIX_N][BENCH_MATRIX_N];
+static float g_digit_img[DIGIT_INPUTS];
 static volatile uint32_t g_sink;
 static uint8_t *g_mem;
 
@@ -146,6 +170,8 @@ static lv_obj_t *g_row_ms[BENCH_SCENES];
 static lv_obj_t *g_row_bar[BENCH_SCENES];
 static lv_obj_t *g_row_fps[BENCH_SCENES];
 static lv_obj_t *g_cpu_value[nitems(g_tests)];
+static lv_obj_t *g_digit_us[nitems(g_digits)];
+static lv_obj_t *g_digit_acc[nitems(g_digits)];
 
 /* Scene in progress, -1 when idle */
 
@@ -165,6 +191,7 @@ static volatile int g_coremark_score;   /* < 0 while running */
 
 static int g_pattern;
 static bool g_running;
+static bool g_auto;                /* "bench run": run everything, exit */
 
 /****************************************************************************
  * Private Functions
@@ -580,6 +607,14 @@ static void bench_finish(void)
 {
   lv_arc_set_value(g_ring, 100);
   lv_label_set_text(g_run_label, "RUN AGAIN");
+
+  if (g_auto)
+    {
+      lv_screen_load(g_cpu_scr);
+      bench_cpu_cb(NULL);
+      printf("bench: done\n");
+      g_running = false;
+    }
 }
 
 /* Drives the run: scenes one after another, then CoreMark */
@@ -733,8 +768,49 @@ static uint32_t bench_cpu(const struct bench_test_s *t)
   return runs * t->work / elapsed / 1000;
 }
 
+/* Classify the MNIST samples, only the inference is timed.  Returns the
+ * number recognized right, or -1 if the implementation cannot run.
+ */
+
+static int bench_digit(const struct bench_digit_s *d, uint32_t *us)
+{
+  float prob[DIGIT_CLASSES];
+  uint64_t ticks = 0;
+  clock_t start;
+  int right = 0;
+  int best;
+  int i;
+  int j;
+
+  for (i = 0; i < DIGIT_SAMPLES; i++)
+    {
+      for (j = 0; j < DIGIT_INPUTS; j++)
+        {
+          g_digit_img[j] = g_digit_sample_images[i][j] / 255.0f;
+        }
+
+      /* The first TFLite Micro call also sets up the interpreter */
+
+      if (i == 0 && d->classify(g_digit_img, prob) < 0)
+        {
+          return -1;
+        }
+
+      start = up_perf_gettime();
+      best = d->classify(g_digit_img, prob);
+      ticks += bench_ticks_since(start);
+      right += best == g_digit_sample_labels[i];
+    }
+
+  *us = bench_ticks_to_us(ticks / DIGIT_SAMPLES);
+  return right;
+}
+
 static void bench_cpu_cb(lv_event_t *e)
 {
+  uint32_t value;
+  uint32_t us;
+  int right;
   int i;
 
   UNUSED(e);
@@ -743,8 +819,33 @@ static void bench_cpu_cb(lv_event_t *e)
     {
       lv_label_set_text(g_cpu_value[i], "...");
       lv_refr_now(NULL);
-      lv_label_set_text_fmt(g_cpu_value[i], "%u %s",
-                            bench_cpu(&g_tests[i]), g_tests[i].unit);
+      value = bench_cpu(&g_tests[i]);
+      lv_label_set_text_fmt(g_cpu_value[i], "%u %s", value,
+                            g_tests[i].unit);
+      printf("bench: %-18s %u %s\n", g_tests[i].name, value,
+             g_tests[i].unit);
+    }
+
+  for (i = 0; i < nitems(g_digits); i++)
+    {
+      lv_label_set_text(g_digit_us[i], "...");
+      lv_refr_now(NULL);
+      right = bench_digit(&g_digits[i], &us);
+      if (right < 0)
+        {
+          lv_label_set_text(g_digit_us[i], "N/A");
+          lv_label_set_text(g_digit_acc[i], "failed to set up");
+          printf("bench: digit %s failed to set up\n", g_digits[i].name);
+          continue;
+        }
+
+      lv_label_set_text_fmt(g_digit_us[i], "%u us", us);
+      lv_label_set_text_fmt(g_digit_acc[i], "%d.%d%% right, %d / %d",
+                            right * 100 / DIGIT_SAMPLES,
+                            right * 1000 / DIGIT_SAMPLES % 10, right,
+                            DIGIT_SAMPLES);
+      printf("bench: digit %-12s %u us/inference  %d / %d right\n",
+             g_digits[i].name, us, right, DIGIT_SAMPLES);
     }
 }
 
@@ -993,6 +1094,30 @@ static void bench_create_cpu(void)
                    y + 30 - ui_ink_top(UI_OSWALD_64));
     }
 
+  /* paint's recognition on TFLite Micro and the plain C version */
+
+  bench_tag(scr, "DIGIT RECOGNITION, PER INFERENCE", UI_MARGIN,
+            BENCH_DIGIT_Y - 77);
+
+  for (i = 0; i < nitems(g_digits); i++)
+    {
+      y = BENCH_DIGIT_Y + i * BENCH_ROW_H;
+
+      obj = ui_box(scr, UI_INK_2, 0);
+      lv_obj_set_pos(obj, UI_MARGIN, y + BENCH_ROW_H - 2);
+      lv_obj_set_size(obj, UI_CONTENT_W, 2);
+
+      ui_place(ui_label(scr, UI_OUTFIT_34, 0xffffff, g_digits[i].name),
+               UI_OUTFIT_34, UI_MARGIN, y + 26);
+      g_digit_acc[i] = ui_label(scr, UI_OUTFIT_26, UI_MUTED, "");
+      lv_label_set_text_fmt(g_digit_acc[i], "%d MNIST test images",
+                            DIGIT_SAMPLES);
+      ui_place(g_digit_acc[i], UI_OUTFIT_26, UI_MARGIN, y + 76);
+      g_digit_us[i] = ui_label(scr, UI_OSWALD_64, 0xffffff, "--");
+      lv_obj_align(g_digit_us[i], LV_ALIGN_TOP_RIGHT, -UI_MARGIN,
+                   y + 30 - ui_ink_top(UI_OSWALD_64));
+    }
+
   obj = bench_button(scr, UI_ORANGE, UI_OSWALD_64, "RUN", bench_cpu_cb);
   lv_obj_set_pos(obj, UI_MARGIN, 1658);
   lv_obj_set_size(obj, UI_CONTENT_W, 150);
@@ -1047,9 +1172,6 @@ int main(int argc, FAR char *argv[])
   lv_nuttx_result_t result;
   uint32_t idle;
 
-  UNUSED(argc);
-  UNUSED(argv);
-
   /* LVGL is one global instance, shared by every task of the flat build */
 
   if (lv_is_initialized())
@@ -1066,6 +1188,12 @@ int main(int argc, FAR char *argv[])
     }
 
   g_running = bench_start(&result) == 0;
+  g_auto = argc > 1 && strcmp(argv[1], "run") == 0;
+  if (g_running && g_auto)
+    {
+      bench_run_cb(NULL);
+    }
+
   while (g_running)
     {
       idle = lv_timer_handler();

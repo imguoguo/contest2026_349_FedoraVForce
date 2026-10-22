@@ -20,5 +20,20 @@ bench: CoreMark 1234 iterations/s
 CoreMark 需要 `CONFIG_BENCHMARK_COREMARK` 和 `CONFIG_PIPES`，没有编进去时显示
 N/A。打开 CoreMark 后编译时会从 GitHub 下载源码。
 
-下面两个按钮：原来的 CPU / 内存测试（整数、浮点矩阵乘、4 MB 拷贝和填充，每项
-约 0.5 秒），以及纯色、渐变、网格测试图（点屏幕切换下一张）。
+下面两个按钮：
+
+- CPU：原来的 CPU / 内存测试（整数、浮点矩阵乘、4 MB 拷贝和填充，每项约
+  0.5 秒），然后比较 paint 手写识别的两种实现：TFLite Micro 和手写的 C 推理，
+  在同一批 500 张 MNIST 测试图（`app/digit`）上的单次推理耗时和准确率。只计
+  推理本身，第一次调用建 TFLM 解释器的时间不算
+- 纯色、渐变、网格测试图（点屏幕切换下一张）
+
+CPU 页的结果也打到串口：
+
+```text
+bench: digit TFLite Micro  <us> us/inference  <认对张数> / 500 right
+```
+
+`bench run`：启动后直接开始跑，渲染场景和 CoreMark 之后接着跑 CPU 页的测试，
+最后打出 `bench: done` 并退出。配合 launcher 的 `/dev/launcher`，可以只用串口
+跑完全部项目：`echo bench run > /dev/launcher`。

@@ -1,7 +1,9 @@
 /****************************************************************************
  * tools/preview/scene_bench.c
  *
- * Bench before a run, during scenes 1 and 3 and with the results.
+ * Bench before a run, during scenes 1 and 3 and with the results.  The
+ * CPU tests spin on the clock, which stands still here, so they are not
+ * run; the digit samples go through the plain C inference to check them.
  ****************************************************************************/
 
 #define main bench_main
@@ -18,6 +20,7 @@ static void tap(int32_t x, int32_t y)
 int main(void)
 {
   lv_nuttx_result_t result;
+  uint32_t us;
 
   bench_start(&result);
   preview_step(500);
@@ -34,6 +37,9 @@ int main(void)
   tap(300, 1460);
   preview_step(500);
   preview_shot("5d-bench-cpu.png");
+
+  printf("digit samples, plain C: %d / %d right\n",
+         bench_digit(&g_digits[nitems(g_digits) - 1], &us), DIGIT_SAMPLES);
 
   lv_nuttx_deinit(&result);
   lv_deinit();

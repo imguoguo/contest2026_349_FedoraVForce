@@ -28,7 +28,8 @@ UI_SRCS = $(APP)/ui/lvx_ui.c $(UI_FONTS)
 SRCS_launcher = $(APP)/launcher/launcher_main.c
 SRCS_paint    = $(APP)/paint/paint_main.c $(APP)/digit/digit.c \
                 $(APP)/digit/digit_model.c
-SRCS_bench    = $(APP)/bench/bench_main.c
+SRCS_bench    = $(APP)/bench/bench_main.c $(APP)/digit/digit.c \
+                $(APP)/digit/digit_model.c $(APP)/digit/digit_samples.c
 SRCS_monitor  = $(APP)/monitor/monitor_main.c
 
 # Home tile layouts with 0 to 5 pinned apps
