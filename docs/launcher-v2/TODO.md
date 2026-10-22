@@ -1,34 +1,26 @@
 # 桌面 v2 待办
 
-## 计划（README 4.7–4.11，不需要板子的先做）
+## 计划（README 4.7–4.11）
 
-1. launcher：`LVX_LAUNCHER_PINNED` 决定桌面磁贴，加 `ALL APPS` 磁贴和全部应用页
-   （TEAM 349 / OPENVELA / LVGL 三组，两列卡片，能滚动）。应用表按条目 id 查：
-   程序名、启动参数、分组、颜色、图标、说明、标签；`LVX_LAUNCHER_APPS` 里写条目
-   id，查不到的 id 当作不带参数的内置程序。从全部应用页启动的应用退出后回到这一页
-2. touch：按 bench 的深色风格。GT9xx 驱动每次只报一个点（`npoints = 1`），所以
-   是单点轨迹，多点要改驱动，这次不做
-3. lvdemo：`lvdemo benchmark` / `lvdemo widgets`，角上叠一个返回按钮；benchmark
-   结束时把汇总打到串口。openvela 自带的应用都是 `while (1)` 或 `uv_run` 死循环，
-   自己退不出来。不改它们的源码，lvdemo 直接调它们创建界面的函数
-   （`snake_game_create`、`whackmole_app_create`……），自己跑循环、叠返回按钮、
-   退出时释放 LVGL；这些应用自己的 Kconfig 不打开，免得重复符号。候选：贪吃蛇、
-   打地鼠、象棋（象棋只有主循环用 libuv）。计算器要 libuv + C++，木鱼要音频，
-   不接
-4. LVGL benchmark 要 `LV_USE_PERF_MONITOR`，打开后 sysmon 会给每个 LVGL 应用自动
-   叠一个性能浮层（sys layer），刷新定时器也不再暂停。我们自己的应用把 sys
-   layer 藏起来，lvdemo 里保留
-5. TFLite Micro：TensorFlow 在本机临时虚拟环境里训练同结构的模型（同样的
-   数据和增强），全 int8 量化成 `.tflite`，Python 里先验准确率，再转成 C 数组。
-   识别代码（手写推理、TFLM 封装、两份模型、测试样本）挪到公共库 `app/digit`，
-   paint 和 bench 共用；bench 加一项：两种实现单次推理耗时和同一批样本上的准确率。
-   TFLM 依赖 `HAVE_CXX` + `LIBCXX`、flatbuffers、gemmlowp、kissfft、ruy（参考
-   `sim:tflm`），源码都在工作区里。先确认 arm64 能编过；接不进来就保留手写版本，
-   把问题记下来
-6. defconfig 分开提交：新应用和 `LVX_LAUNCHER_PINNED`；TFLM 和 C++；LVGL 示例、
-   sysmon 和日志。manifest 加 `app/touch`、`app/lvdemo`、`app/digit`，编译机上手动
-   建软链
-7. 预览：全部应用页、touch、lvdemo（含 openvela 应用）都出图；README 和待办更新
+代码都已完成并在编译机上编过（0 warning，nxstyle 通过），预览出图，等上板验证：
+
+- [x] launcher：`LVX_LAUNCHER_PINNED` 磁贴、`ALL APPS` 磁贴和全部应用页
+- [x] TFLite Micro：paint 的识别跑在 TFLM 上（10/22 板上认对一个 3）。识别代码、
+  两份模型、500 张 MNIST 样本和训练工具在公共库 `app/digit`（paint、bench 共用，
+  两个应用各编一份会重复定义符号）
+- [x] bench：CPU 页加 TFLM 和手写推理的单次耗时、准确率对比；`bench run`
+  跑完全部项目后退出
+- [x] touch：轨迹、坐标、报点率、校准检查。GT9XX 驱动只报一个点
+- [x] lvdemo：LVGL benchmark（汇总打到串口，`exit` 参数跑完自动退出）、
+  widgets、贪吃蛇、打地鼠。openvela 应用不改源码：lvdemo 直接 include 它们，
+  贪吃蛇改成竖屏 52×76 格，打地鼠放进中间 4:3 区域。象棋要读 `/sdcard` 上的
+  PNG，没接
+- [x] launcher 的 `/dev/launcher` 命名管道：在 NSH 里写“条目名 [参数]”启动应用，
+  用来远程跑测试
+- [x] defconfig：新应用和应用列表一个提交；LVGL 示例、性能监视、日志一个提交
+- [x] monitor 的状态列显示等待的事件（Semaphore、Signal），不再只有 Waiting
+- [x] bench、monitor、paint 隐藏 LVGL 性能浮层（打开 `LV_USE_PERF_MONITOR` 后
+  每个应用都会有）
 
 ## 需要决定
 
@@ -65,18 +57,22 @@
 - [ ] touch：轨迹、坐标、报点率，校准检查给出偏差
 - [ ] 全程 NSH 能输入
 
-## 帧率（README 第五节）
+远程能做的（不需要人按屏幕，`/dev/launcher`）：
 
-- 刷新周期只看 `CONFIG_LV_DEF_REFR_PERIOD`。`CONFIG_LV_NUTTX_VSYNC_TIMER_PERIOD`
-  只在 libuv 模式下用到，我们的应用不走 libuv。bench 显示的帧率上限按
-  `LV_DEF_REFR_PERIOD` 算
-- fbdev 每帧把所有脏区域的**包围盒**交给 `FBIO_UPDATE`，s6 驱动再拷包围盒覆盖
-  的整行并清 dcache；驱动和 `fb.c` 里都没有关中断或全局锁
-- 逐项试，每项都用 bench 记录前后的 `bench:` 输出：关 NOOPT
-  （`CONFIG_DEBUG_FULLOPT`）→ LVGL 多渲染单元（`LV_USE_OS` +
-  `LV_DRAW_SW_DRAW_UNIT_CNT`）→ NEON（`LV_USE_DRAW_SW_ASM`）→ 驱动只拷脏列
-- 16ms 下 NSH 卡死，先做这两个实验：
-  1. 16ms 镜像里打开 monitor 看 `nsh_main`：一直 Ready 说明被同为 100 优先级、
-     渲染跟不上时几乎不睡的 launcher 饿住了；一直 Waiting 说明字符没送到，查
-     UART 中断和 RX 溢出
-  2. launcher 优先级降到 NSH 之下，看 NSH 是否恢复
+```text
+nsh> echo bench run > /dev/launcher                      # bench 全部项目，串口 bench: 行
+nsh> echo lvgl_benchmark benchmark exit > /dev/launcher  # LVGL benchmark 汇总
+nsh> echo touch > /dev/launcher                          # 打开应用，看 free 前后
+```
+
+## 帧率（README 第五节，数据在 fps.md）
+
+- [x] 基线 33ms -O0；-O2（`DEBUG_CUSTOMOPT`，arm64 上 `DEBUG_FULLOPT` 是 -Os）
+  每帧耗时减半，CoreMark 2233 → 10847
+- [x] “驱动关中断或持锁”在 33ms 下用 critmon 排除；16ms 下 NSH 卡死在 -O2 下
+  没有复现；改成 16ms 后 5 个场景都是 58 fps
+- [ ] LVGL 多渲染单元（`LV_USE_OS` + `LV_DRAW_SW_DRAW_UNIT_CNT`）
+- [ ] NEON（`LV_USE_DRAW_SW_ASM`）
+- [ ] 驱动只拷脏区域的列：现在 flush 占每帧的 70–80%。改动在
+  `arch/arm64/src/s6`，要走 nuttx fork 的 PR，等确认
+- 每一项都用 `echo bench run > /dev/launcher` 记录前后的 `bench:` 输出
