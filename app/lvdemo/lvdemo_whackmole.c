@@ -12,6 +12,14 @@
  *   screen.  The game is put into a 4:3 area across the middle instead,
  *   the holes are placed again by its table for that area, and the START
  *   button gets bigger.
+ * - Its text is in a 16px font, made for a small screen, which it sets
+ *   again on every start.  Our fonts are set for LV_STATE_USER_1, which
+ *   wins over its default state styles.  The game over box gets bigger.
+ * - The hammer swings by a transform_rotation style, which LVGL 9.1 draws
+ *   through a transformed layer.  Now and then that layer's draw task is
+ *   never taken by the SW draw unit and the refresh spins forever (seen on
+ *   the board and in tools/preview).  The hammer image is rotated instead,
+ *   which needs no layer.
  ****************************************************************************/
 
 /****************************************************************************
@@ -25,6 +33,7 @@
 #include "pic/mole_image.c"
 
 #include "lvdemo.h"
+#include "lvx_ui.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -33,6 +42,61 @@
 #define LVDEMO_START_W        300
 #define LVDEMO_START_H        90
 #define LVDEMO_BG             0x2b4a12   /* Dark grass above and below */
+#define LVDEMO_SWING          300        /* 30 degrees */
+#define LVDEMO_MSGBOX_W       720
+#define LVDEMO_MSGBOX_H       360
+
+/****************************************************************************
+ * Private Functions
+ ****************************************************************************/
+
+static void lvdemo_font(lv_obj_t *obj, const lv_font_t *font)
+{
+  lv_obj_set_style_text_font(obj, font, LV_STATE_USER_1);
+  lv_obj_add_state(obj, LV_STATE_USER_1);
+}
+
+static void lvdemo_swing_cb(lv_event_t *e)
+{
+  lv_image_set_rotation(hammer_cursor,
+                        lv_event_get_code(e) == LV_EVENT_PRESSED ?
+                        LVDEMO_SWING : 0);
+}
+
+static void lvdemo_swing(lv_obj_t *obj)
+{
+  lv_obj_add_event_cb(obj, lvdemo_swing_cb, LV_EVENT_PRESSED, NULL);
+  lv_obj_add_event_cb(obj, lvdemo_swing_cb, LV_EVENT_RELEASED, NULL);
+  lv_obj_add_event_cb(obj, lvdemo_swing_cb, LV_EVENT_PRESS_LOST, NULL);
+}
+
+/* The game over box is made at the end of each game, 300 x 120, its
+ * buttons after it.  LV_EVENT_CHILD_CREATED bubbles up to the screen for
+ * all of them.  Montserrat has the close symbol, Outfit has not.
+ */
+
+static void lvdemo_child_cb(lv_event_t *e)
+{
+  lv_obj_t *obj = lv_event_get_param(e);
+
+  if (obj == NULL)
+    {
+      return;
+    }
+
+  if (lv_obj_check_type(obj, &lv_msgbox_class))
+    {
+      lv_obj_set_style_min_width(obj, LVDEMO_MSGBOX_W, 0);
+      lv_obj_set_style_min_height(obj, LVDEMO_MSGBOX_H, 0);
+      lv_obj_set_style_text_font(obj, UI_ICON_24, 0);
+    }
+  else if (lv_obj_check_type(obj, &lv_msgbox_footer_button_class))
+    {
+      lv_obj_set_style_min_width(obj, LVDEMO_START_W, 0);
+      lv_obj_set_style_min_height(obj, LVDEMO_START_H, 0);
+      lvdemo_font(obj, UI_ICON_24);
+    }
+}
 
 /****************************************************************************
  * Public Functions
@@ -75,6 +139,19 @@ void lvdemo_whackmole_create(void)
   /* The hammer follows the finger in screen coordinates */
 
   lv_obj_set_parent(hammer_cursor, scr);
+  lv_obj_set_style_transform_rotation(hammer_cursor, 0, LV_STATE_PRESSED);
+  lv_obj_remove_local_style_prop(hammer_cursor, LV_STYLE_TRANSITION,
+                                 LV_STATE_DEFAULT);
+  lv_obj_remove_local_style_prop(hammer_cursor, LV_STYLE_TRANSITION,
+                                 LV_STATE_PRESSED);
+  lv_image_set_pivot(hammer_cursor, hammer_image.header.w / 2,
+                     hammer_image.header.h / 2);
+  lv_obj_add_event_cb(scr, lvdemo_child_cb, LV_EVENT_CHILD_CREATED, NULL);
+  lvdemo_swing(game_screen);
+  for (i = 0; i < MOLE_COUNT; i++)
+    {
+      lvdemo_swing(moles[i]);
+    }
 
   for (i = 0; i < lv_obj_get_child_count(game_screen); i++)
     {
@@ -82,6 +159,11 @@ void lvdemo_whackmole_create(void)
       if (lv_obj_check_type(obj, &lv_button_class))
         {
           lv_obj_set_size(obj, LVDEMO_START_W, LVDEMO_START_H);
+          lvdemo_font(lv_obj_get_child(obj, 0), UI_OUTFIT_34);
+        }
+      else if (lv_obj_check_type(obj, &lv_label_class))
+        {
+          lvdemo_font(obj, UI_OUTFIT_34);
         }
     }
 }

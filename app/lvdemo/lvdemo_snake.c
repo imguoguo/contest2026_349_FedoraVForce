@@ -10,6 +10,7 @@
  *   snake_game.c from including it again.
  * - Its state is static and outlives LVGL in the flat build, so it is
  *   cleared before each start and the snake is freed on exit.
+ * - The score and status are in the 14px default font, they get Outfit.
  ****************************************************************************/
 
 /****************************************************************************
@@ -28,6 +29,7 @@
 #include "snake_game.c"
 
 #include "lvdemo.h"
+#include "lvx_ui.h"
 
 /****************************************************************************
  * Public Functions
@@ -39,6 +41,8 @@ void lvdemo_snake_create(void)
   last_score = 0;
   no_score_frames = 0;
   snake_game_create();
+  lv_obj_set_style_text_font(g_game.ui.score_label, UI_OUTFIT_26, 0);
+  lv_obj_set_style_text_font(g_game.ui.status_label, UI_OUTFIT_26, 0);
 }
 
 void lvdemo_snake_destroy(void)
