@@ -4,9 +4,10 @@
  * LVGL launcher
  * VSAI LogicPi A1 (Amlogic S6): MIPI DSI 1080x1920 + GT9XX touch
  *
- * Apps are NSH builtins listed in CONFIG_LVX_LAUNCHER_APPS.
- * LVGL is a single global instance, so the launcher releases it before
- * starting an app and initializes it again after the app exits.
+ * Lock screen, dashboard home and About page.  Apps are NSH builtins
+ * listed in CONFIG_LVX_LAUNCHER_APPS.  LVGL is a single global instance,
+ * so the launcher releases it before starting an app and initializes it
+ * again after the app exits.
  ****************************************************************************/
 
 /****************************************************************************
@@ -31,173 +32,174 @@
 
 #include <lvgl/lvgl.h>
 
+#include "lvx_ui.h"
+
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
 
-#define LAUNCHER_SCREEN_W     1080
-#define LAUNCHER_SCREEN_H     1920
+#define LAUNCHER_TOP_Y        67      /* Team name and FPS row */
+#define LAUNCHER_PAD          44
+#define LAUNCHER_TILES_Y      1062
+#define LAUNCHER_TILE_H       328
+#define LAUNCHER_TILE_PAD     40
+#define LAUNCHER_TITLE_BASE   97      /* Title baseline above tile bottom */
+#define LAUNCHER_STRIP_H      130
+#define LAUNCHER_HALF_W       ((UI_CONTENT_W - UI_GAP) / 2)
+#define LAUNCHER_ROW_H        104     /* About key value rows */
 
-#define LAUNCHER_BG_COLOR     0x15181f
-#define LAUNCHER_LOCK_COLOR   0x2b2f8f
-#define LAUNCHER_CARD_COLOR   0x1f232c
-#define LAUNCHER_LIVE_COLOR   0x3b40d4
-#define LAUNCHER_SYSTEM_COLOR 0x4a5568
-#define LAUNCHER_SLEEP_COLOR  0xb4235a
-#define LAUNCHER_ACCENT       0x5b9cff
-#define LAUNCHER_TEXT_DIM     0x9aa3b5
+#define LAUNCHER_UNLOCK_Y     1320    /* Top of the orange unlock block */
+#define LAUNCHER_UNLOCK_DIST  240
+#define LAUNCHER_TAP_DIST     20
+#define LAUNCHER_BOUNCE_TIME  260
+#define LAUNCHER_FLOAT_DIST   40
+#define LAUNCHER_FLOAT_TIME   800
+#define LAUNCHER_LIFT_TIME    350
 
-/* Tiles sit on a 4 column grid of 238px cells with 16px gaps */
+/* No touch for this long and the FPS counters show IDLE */
 
-#define LAUNCHER_MARGIN       40
-#define LAUNCHER_TILE_GAP     16
-#define LAUNCHER_TILE_STEP    254
-#define LAUNCHER_TILE_RADIUS  14
-#define LAUNCHER_TILES_Y      200
-#define LAUNCHER_LIVE_H       (2 * LAUNCHER_TILE_STEP - LAUNCHER_TILE_GAP)
+#define LAUNCHER_IDLE_TIME    1000
 
-#define LAUNCHER_ANIM_TIME    300
-#define LAUNCHER_ZOOM_MAX     1024
-#define LAUNCHER_FLIP_PERIOD  4000
-#define UNLOCK_DRAG_DIST      300
+/****************************************************************************
+ * Private Types
+ ****************************************************************************/
+
+/* How an app looks on its home tile */
+
+struct launcher_app_s
+{
+  const char *name;         /* Builtin name, NULL for About */
+  const char *title;
+  const char *desc;
+  const char *tag;          /* Small label, may be NULL */
+  const char *icon;
+  uint32_t bg;
+  uint32_t fg;
+  uint32_t icon_color;
+};
 
 /****************************************************************************
  * Private Function Prototypes
  ****************************************************************************/
 
-static void launcher_lock_event_cb(lv_event_t *e);
+static void launcher_about_open_cb(lv_event_t *e);
+static void launcher_lock_cb(lv_event_t *e);
 
 /****************************************************************************
  * Private Data
  ****************************************************************************/
 
+static const struct launcher_app_s g_apps[] =
+{
+  {
+    "paint", "PAINT", "Write a digit, the board reads it", "AI DIGITS",
+    LV_SYMBOL_EDIT, UI_ORANGE, 0xffffff, 0xffffff
+  },
+  {
+    "bench", "BENCH", "LVGL render + CoreMark", NULL,
+    LV_SYMBOL_CHARGE, UI_INK, 0xffffff, UI_ORANGE
+  },
+  {
+    "monitor", "MONITOR", "4 cores, tasks and memory", "SMP",
+    LV_SYMBOL_BARS, UI_BLUE, 0xffffff, 0xffffff
+  },
+};
+
+static const struct launcher_app_s g_about =
+{
+  NULL, "ABOUT", "Port details", NULL,
+  LV_SYMBOL_LIST, UI_PAPER, UI_INK, UI_INK
+};
+
+static const char * const g_about_rows[][2] =
+{
+  { "SOC", "Amlogic S6 (ARM64)" },
+  { "CPU", "4x Cortex-A510, SMP" },
+  { "INTERRUPT", "GICv3" },
+  { "DISPLAY", "MIPI DSI 1080x1920" },
+  { "FORMAT", "RGB565" },
+  { "TOUCH", "GT9XX over I2C" },
+};
+
 static lv_nuttx_result_t g_result;
 
 static lv_obj_t *g_lock;
+static lv_obj_t *g_unlock;
 static lv_obj_t *g_home_scr;
-static lv_obj_t *g_home_tiles;
 static lv_obj_t *g_about_scr;
+static lv_obj_t *g_about_rule;
+static lv_obj_t *g_about_list;
 
-static lv_obj_t *g_live_pane;
-static lv_obj_t *g_lock_clock;
+/* Live values */
+
+static lv_obj_t *g_lock_hour;
+static lv_obj_t *g_lock_min;
+static lv_obj_t *g_lock_sec;
 static lv_obj_t *g_home_clock;
+static lv_obj_t *g_home_sec;
 static lv_obj_t *g_home_heap;
-static lv_obj_t *g_about_uptime;
+static lv_obj_t *g_home_fps;
+static lv_obj_t *g_home_uptime;
+static lv_obj_t *g_top_fps;
+static lv_obj_t *g_about_fps;
 static lv_obj_t *g_about_heap;
+static lv_obj_t *g_about_bar;
 
-static lv_obj_t *g_return_tile;
-static lv_area_t g_zoom_area;
+static uint32_t g_frames;
+static int g_fps;                   /* -1 while idle */
 static int32_t g_drag_start;
+static bool g_drag_unlock;
 static int g_launch;
-
-static const lv_style_prop_t g_press_props[] =
-{
-  LV_STYLE_TRANSFORM_WIDTH, LV_STYLE_TRANSFORM_HEIGHT, 0
-};
-
-static lv_style_transition_dsc_t g_press_trans;
-
-static const uint32_t g_app_colors[] =
-{
-  0x1f6feb, 0xe5484d, 0x2ea043, 0xe8a33d, 0x8250df, 0x0e9aa7
-};
 
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
 
-static lv_obj_t *launcher_label(lv_obj_t *parent, const char *text,
-                                const lv_font_t *font, uint32_t color,
-                                lv_align_t align, int32_t x, int32_t y)
+/* Text whose top right corner is at (x, y) */
+
+static lv_obj_t *launcher_right(lv_obj_t *obj, const lv_font_t *font,
+                                int32_t x, int32_t y)
 {
-  lv_obj_t *label = lv_label_create(parent);
-
-  lv_obj_set_style_text_font(label, font, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
-  lv_label_set_text(label, text);
-  lv_obj_align(label, align, x, y);
-  return label;
-}
-
-static lv_obj_t *launcher_dim(lv_obj_t *label)
-{
-  lv_obj_set_style_text_opa(label, LV_OPA_70, 0);
-  return label;
-}
-
-static lv_obj_t *launcher_box(lv_obj_t *parent, uint32_t color,
-                              int32_t radius)
-{
-  lv_obj_t *obj = lv_obj_create(parent);
-
-  lv_obj_remove_style_all(obj);
-  lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(obj, lv_color_hex(color), 0);
-  lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(obj, radius, 0);
+  lv_obj_align(obj, LV_ALIGN_TOP_RIGHT, -x, y - ui_ink_top(font));
   return obj;
 }
 
-/* Outlined round button, used for back and unlock */
-
-static lv_obj_t *launcher_ring(lv_obj_t *parent, const char *symbol,
-                               lv_event_cb_t cb)
+static lv_obj_t *launcher_card(lv_obj_t *parent, uint32_t color, int32_t x,
+                               int32_t y, int32_t w, int32_t h)
 {
-  lv_obj_t *obj = launcher_box(parent, 0xffffff, LV_RADIUS_CIRCLE);
+  lv_obj_t *card = ui_box(parent, color, UI_RADIUS);
 
-  lv_obj_set_size(obj, 104, 104);
-  lv_obj_set_style_bg_opa(obj, LV_OPA_10, 0);
-  lv_obj_set_style_bg_opa(obj, LV_OPA_40, LV_STATE_PRESSED);
-  lv_obj_set_style_border_color(obj, lv_color_white(), 0);
-  lv_obj_set_style_border_width(obj, 3, 0);
-  lv_obj_add_event_cb(obj, cb, LV_EVENT_SHORT_CLICKED, NULL);
-  launcher_label(obj, symbol, &lv_font_montserrat_24, 0xffffff,
-                 LV_ALIGN_CENTER, 0, 0);
-  return obj;
+  lv_obj_set_pos(card, x, y);
+  lv_obj_set_size(card, w, h);
+  return card;
 }
 
 static lv_obj_t *launcher_screen(void)
 {
   lv_obj_t *scr = lv_obj_create(NULL);
 
-  lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(scr, lv_color_hex(LAUNCHER_BG_COLOR), 0);
-  lv_obj_set_style_bg_grad_color(scr, lv_color_black(), 0);
-  lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_VER, 0);
+  lv_obj_remove_style_all(scr);
+  lv_obj_set_style_bg_color(scr, lv_color_hex(UI_BG), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  lv_obj_set_scroll_dir(scr, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
   return scr;
 }
 
-/* Montserrat stops at 48px, so big text is drawn at twice that size */
+/* "FEDORA-V FORCE / 349" on the left, returns the right label */
 
-static void launcher_zoom_label(lv_obj_t *label, int32_t pivot_x,
-                                int32_t pivot_y)
+static lv_obj_t *launcher_topbar(lv_obj_t *parent, uint32_t color,
+                                 const char *right)
 {
-  lv_obj_set_style_transform_scale(label, 2 * LV_SCALE_NONE, 0);
-  lv_obj_set_style_transform_pivot_x(label, lv_pct(pivot_x), 0);
-  lv_obj_set_style_transform_pivot_y(label, lv_pct(pivot_y), 0);
+  ui_place(ui_tag(parent, UI_DIM, "FEDORA-V FORCE  /  349"), UI_OUTFIT_26,
+           UI_MARGIN, LAUNCHER_TOP_Y);
+  return launcher_right(ui_tag(parent, color, right), UI_OUTFIT_26,
+                        UI_MARGIN, LAUNCHER_TOP_Y);
 }
 
-static void launcher_anim(void *var, lv_anim_exec_xcb_t exec_cb,
-                          int32_t from, int32_t to, uint32_t delay,
-                          lv_anim_path_cb_t path_cb,
-                          lv_anim_completed_cb_t completed_cb)
+static void launcher_width_cb(void *obj, int32_t v)
 {
-  lv_anim_t a;
-
-  lv_anim_init(&a);
-  lv_anim_set_var(&a, var);
-  lv_anim_set_exec_cb(&a, exec_cb);
-  lv_anim_set_values(&a, from, to);
-  lv_anim_set_duration(&a, LAUNCHER_ANIM_TIME);
-  lv_anim_set_delay(&a, delay);
-  lv_anim_set_path_cb(&a, path_cb);
-  lv_anim_set_completed_cb(&a, completed_cb);
-  lv_anim_start(&a);
-}
-
-static void launcher_translate_x_cb(void *obj, int32_t v)
-{
-  lv_obj_set_style_translate_x(obj, v, 0);
+  lv_obj_set_width(obj, v);
 }
 
 static void launcher_translate_y_cb(void *obj, int32_t v)
@@ -205,239 +207,324 @@ static void launcher_translate_y_cb(void *obj, int32_t v)
   lv_obj_set_style_translate_y(obj, v, 0);
 }
 
-static lv_obj_t *launcher_info_row(lv_obj_t *parent, const char *key,
-                                   const char *val)
+/* Width of the used part of the About heap bar */
+
+static int32_t launcher_heap_used(const struct mallinfo *mi)
 {
-  lv_obj_t *row = lv_obj_create(parent);
-
-  lv_obj_remove_style_all(row);
-  lv_obj_set_size(row, lv_pct(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-  launcher_label(row, key, &lv_font_montserrat_24, LAUNCHER_TEXT_DIM,
-                 LV_ALIGN_DEFAULT, 0, 0);
-  return launcher_label(row, val, &lv_font_montserrat_24, 0xffffff,
-                        LV_ALIGN_DEFAULT, 0, 0);
+  return ((mi->arena - mi->fordblks) >> 10) * (UI_CONTENT_W - 2 * 48) /
+         (mi->arena >> 10);
 }
 
-static lv_obj_t *launcher_card(lv_obj_t *parent, const char *title)
+/****************************************************************************
+ * Name: frame rate
+ *
+ * A frame is a refresh that rendered something, LV_EVENT_RENDER_READY is
+ * not sent when nothing was invalidated.
+ ****************************************************************************/
+
+static void launcher_render_cb(lv_event_t *e)
 {
-  lv_obj_t *card = launcher_box(parent, LAUNCHER_CARD_COLOR,
-                                LAUNCHER_TILE_RADIUS);
+  UNUSED(e);
+  g_frames++;
+}
 
-  lv_obj_set_size(card, lv_pct(100), LV_SIZE_CONTENT);
-  lv_obj_set_style_pad_all(card, 44, 0);
-  lv_obj_set_style_pad_row(card, 32, 0);
-  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-
-  launcher_label(card, title, &lv_font_montserrat_16, LAUNCHER_ACCENT,
-                 LV_ALIGN_DEFAULT, 0, 0);
-  return card;
+static void launcher_fps_text(char *buf, size_t size, const char *suffix)
+{
+  if (g_fps < 0)
+    {
+      snprintf(buf, size, "IDLE");
+    }
+  else
+    {
+      snprintf(buf, size, "%d%s", g_fps, suffix);
+    }
 }
 
 /****************************************************************************
  * Name: tiles
  ****************************************************************************/
 
-static lv_obj_t *launcher_tile(lv_obj_t *parent, uint32_t color,
-                               const char *glyph, const char *name)
-{
-  lv_obj_t *tile = launcher_box(parent, color, LAUNCHER_TILE_RADIUS);
-
-  lv_obj_set_style_bg_grad_color(tile,
-                                 lv_color_darken(lv_color_hex(color),
-                                                 LV_OPA_30), 0);
-  lv_obj_set_style_bg_grad_dir(tile, LV_GRAD_DIR_VER, 0);
-  lv_obj_set_style_transform_width(tile, -8, LV_STATE_PRESSED);
-  lv_obj_set_style_transform_height(tile, -8, LV_STATE_PRESSED);
-  lv_obj_set_style_transition(tile, &g_press_trans, 0);
-
-  if (glyph != NULL)
-    {
-      launcher_label(tile, glyph, &lv_font_montserrat_48, 0xffffff,
-                     LV_ALIGN_CENTER, 0, -16);
-    }
-
-  if (name != NULL)
-    {
-      launcher_label(tile, name, &lv_font_montserrat_24, 0xffffff,
-                     LV_ALIGN_BOTTOM_LEFT, 24, -20);
-    }
-
-  return tile;
-}
-
-/* Position and size are in grid cells */
-
-static void launcher_place(lv_obj_t *tile, int col, int row, int w, int h)
-{
-  lv_obj_set_pos(tile, col * LAUNCHER_TILE_STEP, row * LAUNCHER_TILE_STEP);
-  lv_obj_set_size(tile, w * LAUNCHER_TILE_STEP - LAUNCHER_TILE_GAP,
-                  h * LAUNCHER_TILE_STEP - LAUNCHER_TILE_GAP);
-}
-
-static lv_obj_t *launcher_app_tile(lv_obj_t *parent, int index,
-                                   bool named)
-{
-  FAR const char *name = builtin_getname(index);
-  char title[32];
-  char letter[2];
-  lv_obj_t *tile;
-
-  snprintf(title, sizeof(title), "%c%s", toupper(name[0]), name + 1);
-  letter[0] = title[0];
-  letter[1] = '\0';
-
-  tile = launcher_tile(parent, g_app_colors[index % nitems(g_app_colors)],
-                       letter, named ? title : NULL);
-  launcher_zoom_label(lv_obj_get_child(tile, 0), 50, 50);
-  return tile;
-}
-
-/* Grow or shrink a top layer tile between g_zoom_area and full screen */
-
-static void launcher_zoom_cb(void *obj, int32_t v)
-{
-  lv_area_t *a = &g_zoom_area;
-
-  lv_obj_set_pos(obj, lv_map(v, 0, LAUNCHER_ZOOM_MAX, a->x1, 0),
-                 lv_map(v, 0, LAUNCHER_ZOOM_MAX, a->y1, 0));
-  lv_obj_set_size(obj,
-                  lv_map(v, 0, LAUNCHER_ZOOM_MAX, lv_area_get_width(a),
-                         LAUNCHER_SCREEN_W),
-                  lv_map(v, 0, LAUNCHER_ZOOM_MAX, lv_area_get_height(a),
-                         LAUNCHER_SCREEN_H));
-  lv_obj_set_style_radius(obj, lv_map(v, 0, LAUNCHER_ZOOM_MAX,
-                                      LAUNCHER_TILE_RADIUS, 0), 0);
-}
-
-static void launcher_zoomed_cb(lv_anim_t *a)
-{
-  g_launch = (int)(intptr_t)lv_obj_get_user_data(a->var);
-}
-
-static void launcher_app_event_cb(lv_event_t *e)
-{
-  int index = (int)(intptr_t)lv_event_get_user_data(e);
-  lv_obj_t *obj = launcher_app_tile(lv_layer_top(), index, false);
-
-  /* Block further taps until the app is started */
-
-  lv_obj_add_flag(lv_layer_top(), LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_user_data(obj, (void *)(intptr_t)index);
-  lv_obj_get_coords(lv_event_get_target(e), &g_zoom_area);
-  launcher_anim(obj, launcher_zoom_cb, 0, LAUNCHER_ZOOM_MAX, 0,
-                lv_anim_path_ease_in_out, launcher_zoomed_cb);
-}
-
-static void launcher_about_open_cb(lv_event_t *e)
-{
-  UNUSED(e);
-  lv_screen_load_anim(g_about_scr, LV_SCR_LOAD_ANIM_MOVE_LEFT,
-                      LAUNCHER_ANIM_TIME, 0, false);
-}
-
-static void launcher_flip_cb(lv_timer_t *timer)
-{
-  int32_t y = lv_obj_get_style_translate_y(g_live_pane, 0);
-
-  UNUSED(timer);
-  launcher_anim(g_live_pane, launcher_translate_y_cb, y,
-                y < 0 ? 0 : -LAUNCHER_LIVE_H, 0, lv_anim_path_ease_in_out,
-                NULL);
-}
-
-/* Live tile: uptime and free heap faces stacked in a pane that flips */
-
-static void launcher_create_live_tile(lv_obj_t *parent)
-{
-  lv_obj_t *tile = launcher_tile(parent, LAUNCHER_LIVE_COLOR, NULL, NULL);
-  lv_obj_t *pane;
-  lv_obj_t *label;
-
-  launcher_place(tile, 0, 0, 4, 2);
-  lv_obj_add_event_cb(tile, launcher_about_open_cb, LV_EVENT_CLICKED,
-                      NULL);
-
-  pane = lv_obj_create(tile);
-  lv_obj_remove_style_all(pane);
-  lv_obj_remove_flag(pane, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(pane, lv_pct(100), 2 * LAUNCHER_LIVE_H);
-
-  launcher_dim(launcher_label(pane, "UPTIME", &lv_font_montserrat_16,
-                              0xffffff, LV_ALIGN_TOP_LEFT, 44, 40));
-  g_home_clock = launcher_label(pane, "00:00:00", &lv_font_montserrat_48,
-                                0xffffff, LV_ALIGN_TOP_LEFT, 44, 110);
-  launcher_zoom_label(g_home_clock, 0, 0);
-  launcher_dim(launcher_label(pane, "openvela on LogicPi A1",
-                              &lv_font_montserrat_24, 0xffffff,
-                              LV_ALIGN_TOP_LEFT, 44,
-                              LAUNCHER_LIVE_H - 80));
-
-  launcher_dim(launcher_label(pane, "FREE HEAP", &lv_font_montserrat_16,
-                              0xffffff, LV_ALIGN_TOP_LEFT, 44,
-                              LAUNCHER_LIVE_H + 40));
-  g_home_heap = launcher_label(pane, "-", &lv_font_montserrat_48,
-                               0xffffff, LV_ALIGN_TOP_LEFT, 44,
-                               LAUNCHER_LIVE_H + 110);
-  launcher_zoom_label(g_home_heap, 0, 0);
-  label = launcher_dim(launcher_label(pane, "", &lv_font_montserrat_24,
-                                      0xffffff, LV_ALIGN_TOP_LEFT, 44,
-                                      2 * LAUNCHER_LIVE_H - 80));
-  lv_label_set_text_fmt(label, "NuttX + LVGL %d.%d", LVGL_VERSION_MAJOR,
-                        LVGL_VERSION_MINOR);
-
-  g_live_pane = pane;
-}
-
-/* Layout: live tile, then a 2x2 tile per app, then the small tiles in
- * the next free 2x2 block.
+/* Look of an app on its tile, apps not listed in g_apps get a dark tile
+ * with their name.  The result is only valid until the next call.
  */
 
-static void launcher_create_tiles(lv_obj_t *parent, int last)
+static const struct launcher_app_s *launcher_app_info(const char *name)
+{
+  static struct launcher_app_s def;
+  static char title[16];
+  int i;
+
+  if (name == NULL)
+    {
+      return &g_about;
+    }
+
+  for (i = 0; i < nitems(g_apps); i++)
+    {
+      if (strcmp(g_apps[i].name, name) == 0)
+        {
+          return &g_apps[i];
+        }
+    }
+
+  for (i = 0; i < sizeof(title) - 1 && name[i] != '\0'; i++)
+    {
+      title[i] = toupper(name[i]);
+    }
+
+  title[i] = '\0';
+  def.name = name;
+  def.title = title;
+  def.desc = "";
+  def.icon = LV_SYMBOL_PLAY;
+  def.bg = UI_INK_2;
+  def.fg = 0xffffff;
+  def.icon_color = 0xffffff;
+  return &def;
+}
+
+/* Icon and arrow on top, title and one line of description at the
+ * bottom.  The tag goes below the icon on a tall tile, beside it otherwise.
+ * A title too wide for the tile gets the smaller font.
+ */
+
+static void launcher_fill_tile(lv_obj_t *tile,
+                               const struct launcher_app_s *app, bool tall)
+{
+  const lv_font_t *font = UI_OSWALD_120;
+  lv_obj_t *obj;
+
+  lv_obj_set_style_bg_color(tile, lv_color_hex(app->bg), 0);
+  lv_obj_set_style_bg_color(tile, lv_color_darken(lv_color_hex(app->bg),
+                                                  LV_OPA_20),
+                            LV_STATE_PRESSED);
+  lv_obj_set_style_pad_all(tile, LAUNCHER_TILE_PAD, 0);
+
+  obj = ui_label(tile, UI_ICON_48, app->icon_color, app->icon);
+  lv_obj_set_pos(obj, 0, 6);
+  obj = ui_label(tile, UI_ICON_48, app->fg, LV_SYMBOL_RIGHT);
+  lv_obj_align(obj, LV_ALIGN_TOP_RIGHT, 0, 6);
+
+  if (app->tag != NULL)
+    {
+      obj = ui_tag(tile, app->bg, app->tag);
+      lv_obj_set_style_bg_color(obj, lv_color_hex(app->fg), 0);
+      lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+      lv_obj_set_style_radius(obj, 6, 0);
+      lv_obj_set_style_pad_hor(obj, 18, 0);
+      lv_obj_set_style_pad_ver(obj, 2, 0);
+      lv_obj_set_pos(obj, tall ? 0 : 80, tall ? 90 : 12);
+    }
+
+  if (lv_text_get_width(app->title, strlen(app->title), font, 0) >
+      lv_obj_get_style_width(tile, 0) - 2 * LAUNCHER_TILE_PAD)
+    {
+      font = UI_OSWALD_64;
+    }
+
+  /* The title stands on a baseline above the description */
+
+  obj = ui_label(tile, font, app->fg, app->title);
+  lv_obj_align(obj, LV_ALIGN_BOTTOM_LEFT, 0,
+               LAUNCHER_TILE_PAD - LAUNCHER_TITLE_BASE + font->base_line);
+  obj = ui_label(tile, UI_OUTFIT_26, app->fg, app->desc);
+  lv_obj_align(obj, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+}
+
+static void launcher_app_cb(lv_event_t *e)
+{
+  g_launch = (int)(intptr_t)lv_event_get_user_data(e);
+}
+
+/* With three or more items the first is a tall tile on the left and the
+ * next two stack beside it.  The rest go two per row, a last odd one
+ * takes the whole row.  Returns the number of rows used.
+ */
+
+static int launcher_place_tile(lv_obj_t *tile, int i, int n)
+{
+  int32_t step = LAUNCHER_TILE_H + UI_GAP;
+  int32_t right = UI_MARGIN + LAUNCHER_HALF_W + UI_GAP;
+  int k = n >= 3 ? i - 3 : i;
+  int row = (n >= 3 ? 2 : 0) + k / 2;
+
+  if (n >= 3 && i == 0)
+    {
+      lv_obj_set_pos(tile, UI_MARGIN, LAUNCHER_TILES_Y);
+      lv_obj_set_size(tile, LAUNCHER_HALF_W, LAUNCHER_TILE_H + step);
+      return 2;
+    }
+
+  if (n >= 3 && i < 3)
+    {
+      lv_obj_set_pos(tile, right, LAUNCHER_TILES_Y + (i - 1) * step);
+      lv_obj_set_size(tile, LAUNCHER_HALF_W, LAUNCHER_TILE_H);
+      return 2;
+    }
+
+  lv_obj_set_pos(tile, k % 2 ? right : UI_MARGIN,
+                 LAUNCHER_TILES_Y + row * step);
+  lv_obj_set_size(tile, k % 2 == 0 && i == n - 1 ? UI_CONTENT_W :
+                  LAUNCHER_HALF_W, LAUNCHER_TILE_H);
+  return row + 1;
+}
+
+/* About is always the second item, the lock strip closes the list */
+
+static int32_t launcher_create_tiles(lv_obj_t *parent)
 {
   char list[] = CONFIG_LVX_LAUNCHER_APPS;
+  const char *names[8];     /* NULL for About */
+  int index[8];
   FAR char *save;
   FAR char *name;
   lv_obj_t *tile;
-  int block = 0;
-  int index;
+  int32_t y;
+  int rows = 0;
+  int n = 0;
+  int i;
 
-  launcher_create_live_tile(parent);
-
-  for (name = strtok_r(list, " ", &save); name != NULL;
+  for (name = strtok_r(list, " ", &save); name != NULL && n < 7;
        name = strtok_r(NULL, " ", &save))
     {
-      index = builtin_isavail(name);
-      if (index < 0)
+      index[n] = builtin_isavail(name);
+      if (index[n] >= 0)
         {
-          continue;
+          names[n++] = name;
         }
 
-      tile = launcher_app_tile(parent, index, true);
-      launcher_place(tile, block % 2 * 2, 2 + block / 2 * 2, 2, 2);
-      lv_obj_add_event_cb(tile, launcher_app_event_cb, LV_EVENT_CLICKED,
-                          (void *)(intptr_t)index);
-      if (index == last)
+      if (n == 1)
         {
-          g_return_tile = tile;
+          index[n] = -1;
+          names[n++] = NULL;
         }
-
-      block++;
     }
 
-  tile = launcher_tile(parent, LAUNCHER_SYSTEM_COLOR, LV_SYMBOL_SETTINGS,
-                       "System");
-  launcher_place(tile, block % 2 * 2, 2 + block / 2 * 2, 1, 1);
-  lv_obj_add_event_cb(tile, launcher_about_open_cb, LV_EVENT_CLICKED,
-                      NULL);
+  if (n == 0)
+    {
+      index[n] = -1;
+      names[n++] = NULL;
+    }
 
-  tile = launcher_tile(parent, LAUNCHER_SLEEP_COLOR, LV_SYMBOL_POWER,
-                       "Lock");
-  launcher_place(tile, block % 2 * 2 + 1, 2 + block / 2 * 2, 1, 1);
-  lv_obj_add_event_cb(tile, launcher_lock_event_cb, LV_EVENT_CLICKED, NULL);
+  for (i = 0; i < n; i++)
+    {
+      tile = ui_box(parent, 0, UI_RADIUS);
+      lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+      rows = launcher_place_tile(tile, i, n);
+      launcher_fill_tile(tile, launcher_app_info(names[i]),
+                         i == 0 && n >= 3);
+
+      if (index[i] < 0)
+        {
+          lv_obj_add_event_cb(tile, launcher_about_open_cb,
+                              LV_EVENT_CLICKED, NULL);
+        }
+      else
+        {
+          lv_obj_add_event_cb(tile, launcher_app_cb, LV_EVENT_CLICKED,
+                              (void *)(intptr_t)index[i]);
+        }
+    }
+
+  y = LAUNCHER_TILES_Y + rows * (LAUNCHER_TILE_H + UI_GAP);
+
+  tile = ui_box(parent, UI_PAPER, UI_RADIUS);
+  lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(tile, lv_color_hex(UI_RULE), LV_STATE_PRESSED);
+  lv_obj_set_style_pad_hor(tile, LAUNCHER_TILE_PAD, 0);
+  lv_obj_set_pos(tile, UI_MARGIN, y);
+  lv_obj_set_size(tile, UI_CONTENT_W, LAUNCHER_STRIP_H);
+  lv_obj_add_event_cb(tile, launcher_lock_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_align(ui_label(tile, UI_ICON_48, UI_INK, LV_SYMBOL_POWER),
+               LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_align(ui_label(tile, UI_OSWALD_64, UI_INK, "LOCK"),
+               LV_ALIGN_LEFT_MID, 80, 0);
+  lv_obj_align(ui_label(tile, UI_ICON_48, UI_INK, LV_SYMBOL_RIGHT),
+               LV_ALIGN_RIGHT_MID, 0, 0);
+
+  return y + LAUNCHER_STRIP_H;
+}
+
+/****************************************************************************
+ * Name: home screen
+ ****************************************************************************/
+
+static void launcher_create_home(void)
+{
+  lv_obj_t *scr = launcher_screen();
+  lv_obj_t *card;
+  lv_obj_t *obj;
+  int32_t bottom;
+
+  g_top_fps = launcher_topbar(scr, UI_INK, "IDLE");
+
+  /* Uptime clock */
+
+  card = launcher_card(scr, UI_INK, UI_MARGIN, 140, UI_CONTENT_W, 440);
+  ui_place(ui_tag(card, UI_MUTED, "UPTIME CLOCK"), UI_OUTFIT_26,
+           LAUNCHER_PAD, 47);
+  obj = launcher_right(ui_label(card, UI_OUTFIT_26, UI_MUTED,
+                                "NuttX / openvela"),
+                       UI_OUTFIT_26, LAUNCHER_PAD, 47);
+  lv_obj_align_to(ui_label(card, UI_ICON_24, UI_MUTED, LV_SYMBOL_SETTINGS),
+                  obj, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+
+  g_home_clock = ui_num(card, UI_OSWALD_300, 0xffffff);
+  ui_place(g_home_clock, UI_OSWALD_300, LAUNCHER_PAD, 165);
+  g_home_sec = ui_num(card, UI_OSWALD_120, UI_ORANGE);
+  ui_place(g_home_sec, UI_OSWALD_120, 770, 148);
+
+  /* Free heap and frame rate */
+
+  card = launcher_card(scr, UI_YELLOW, UI_MARGIN, 604, LAUNCHER_HALF_W, 260);
+  ui_place(ui_tag(card, UI_INK, "HEAP FREE"), UI_OUTFIT_26, LAUNCHER_PAD,
+           47);
+  g_home_heap = ui_num(card, UI_OSWALD_120, UI_INK);
+  ui_place(g_home_heap, UI_OSWALD_120, LAUNCHER_PAD, 118);
+
+  card = launcher_card(scr, UI_BLUE, UI_MARGIN + LAUNCHER_HALF_W + UI_GAP,
+                       604, LAUNCHER_HALF_W, 260);
+  ui_place(ui_tag(card, 0xffffff, "FRAMES / S"), UI_OUTFIT_26,
+           LAUNCHER_PAD, 47);
+  g_home_fps = ui_num(card, UI_OSWALD_120, 0xffffff);
+  ui_place(g_home_fps, UI_OSWALD_120, LAUNCHER_PAD, 118);
+
+  card = launcher_card(scr, UI_PAPER, UI_MARGIN, 888, UI_CONTENT_W, 150);
+  lv_obj_align(ui_tag(card, UI_DIM, "UPTIME"), LV_ALIGN_LEFT_MID,
+               LAUNCHER_PAD, 0);
+  g_home_uptime = ui_label(card, UI_OSWALD_64, UI_INK, "");
+  lv_obj_align(g_home_uptime, LV_ALIGN_RIGHT_MID, -LAUNCHER_PAD, 0);
+
+  bottom = launcher_create_tiles(scr);
+
+  /* Room below the last tile when the list scrolls */
+
+  obj = lv_obj_create(scr);
+  lv_obj_remove_style_all(obj);
+  lv_obj_set_pos(obj, 0, bottom);
+  lv_obj_set_size(obj, 1, UI_GAP);
+
+  g_home_scr = scr;
+}
+
+/* Cards rise into place one after another and the counters start at 0 */
+
+static void launcher_home_intro(void)
+{
+  struct mallinfo mi = mallinfo();
+  uint32_t i;
+  uint32_t n = lv_obj_get_child_count(g_home_scr);
+
+  for (i = 2; i < n; i++)
+    {
+      ui_enter(lv_obj_get_child(g_home_scr, i), 0, 120, (i - 2) * 40);
+    }
+
+  ui_num_count(g_home_heap, mi.fordblks >> 20, "M", 100);
+  if (g_fps >= 0)
+    {
+      ui_num_count(g_home_fps, g_fps, "", 140);
+    }
 }
 
 /****************************************************************************
@@ -447,95 +534,133 @@ static void launcher_create_tiles(lv_obj_t *parent, int last)
 static void launcher_about_close_cb(lv_event_t *e)
 {
   UNUSED(e);
-  lv_screen_load_anim(g_home_scr, LV_SCR_LOAD_ANIM_MOVE_RIGHT,
-                      LAUNCHER_ANIM_TIME, 0, false);
+  lv_screen_load(g_home_scr);
 }
 
-static void launcher_create_about_scr(void)
+static void launcher_about_open_cb(lv_event_t *e)
+{
+  struct mallinfo mi = mallinfo();
+  uint32_t i;
+
+  UNUSED(e);
+
+  lv_screen_load(g_about_scr);
+
+  /* Rule draws from the left, rows follow it */
+
+  ui_anim(g_about_rule, launcher_width_cb, 0, UI_CONTENT_W, UI_ENTER_TIME,
+          0, NULL);
+  for (i = 0; i < lv_obj_get_child_count(g_about_list); i++)
+    {
+      ui_enter(lv_obj_get_child(g_about_list, i), -60, 0, i * 40);
+    }
+
+  if (g_fps >= 0)
+    {
+      ui_num_count(g_about_fps, g_fps, "", 100);
+    }
+
+  ui_anim(g_about_bar, launcher_width_cb, 0, launcher_heap_used(&mi),
+          UI_ENTER_TIME, 100, NULL);
+}
+
+static void launcher_create_about(void)
 {
   lv_obj_t *scr = launcher_screen();
-  lv_obj_t *body;
   lv_obj_t *card;
+  lv_obj_t *row;
   lv_obj_t *obj;
+  int32_t y;
+  int i;
 
-  obj = launcher_ring(scr, LV_SYMBOL_LEFT, launcher_about_close_cb);
-  lv_obj_align(obj, LV_ALIGN_TOP_LEFT, LAUNCHER_MARGIN, 60);
-  launcher_label(scr, "System", &lv_font_montserrat_48, 0xffffff,
-                 LV_ALIGN_TOP_LEFT, LAUNCHER_MARGIN + 132, 82);
+  lv_obj_set_pos(ui_back(scr, UI_INK, launcher_about_close_cb), UI_MARGIN,
+                 56);
+  launcher_right(ui_tag(scr, UI_DIM, "PORT DETAILS"), UI_OUTFIT_26,
+                 UI_MARGIN, 98);
+  ui_place(ui_label(scr, UI_OSWALD_120, UI_INK, "ABOUT"), UI_OSWALD_120,
+           UI_MARGIN, 212);
+  ui_place(ui_label(scr, UI_OUTFIT_52, UI_INK, "VSAI LogicPi A1"),
+           UI_OUTFIT_52, UI_MARGIN, 352);
+  ui_place(ui_label(scr, UI_OUTFIT_26, UI_DIM,
+                    "openvela / NuttX, ported by team 349"),
+           UI_OUTFIT_26, UI_MARGIN, 428);
 
-  body = lv_obj_create(scr);
-  lv_obj_remove_style_all(body);
-  lv_obj_set_size(body, LAUNCHER_SCREEN_W - 2 * LAUNCHER_MARGIN,
-                  LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(body, LAUNCHER_TILE_GAP, 0);
-  lv_obj_align(body, LV_ALIGN_TOP_MID, 0, LAUNCHER_TILES_Y);
+  g_about_rule = ui_box(scr, UI_INK, 0);
+  lv_obj_set_pos(g_about_rule, UI_MARGIN, 500);
+  lv_obj_set_size(g_about_rule, UI_CONTENT_W, 6);
 
-  card = launcher_card(body, "HARDWARE");
-  launcher_info_row(card, "Board", "VSAI LogicPi A1");
-  launcher_info_row(card, "SoC", "Amlogic S6 (ARM64)");
-  launcher_info_row(card, "Interrupt", "GICv3");
-  launcher_info_row(card, "Display", "MIPI DSI 1080x1920");
-  launcher_info_row(card, "Touch", "GT9XX I2C");
+  /* Key value rows, clipped so they can slide in from the left */
 
-  card = launcher_card(body, "SOFTWARE");
-  launcher_info_row(card, "OS", "NuttX / openvela");
-  lv_label_set_text_fmt(launcher_info_row(card, "Graphics", ""),
-                        "LVGL %d.%d", LVGL_VERSION_MAJOR,
-                        LVGL_VERSION_MINOR);
-  g_about_uptime = launcher_info_row(card, "Uptime", "-");
-  g_about_heap = launcher_info_row(card, "Free heap", "-");
+  g_about_list = lv_obj_create(scr);
+  lv_obj_remove_style_all(g_about_list);
+  lv_obj_remove_flag(g_about_list, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_pos(g_about_list, UI_MARGIN, 510);
+  lv_obj_set_size(g_about_list, UI_CONTENT_W,
+                  nitems(g_about_rows) * LAUNCHER_ROW_H);
+
+  for (i = 0; i < nitems(g_about_rows); i++)
+    {
+      row = lv_obj_create(g_about_list);
+      lv_obj_remove_style_all(row);
+      lv_obj_set_pos(row, 0, i * LAUNCHER_ROW_H);
+      lv_obj_set_size(row, UI_CONTENT_W, LAUNCHER_ROW_H);
+      lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+      lv_obj_set_style_border_width(row, 2, 0);
+      lv_obj_set_style_border_color(row, lv_color_hex(UI_RULE), 0);
+      lv_obj_align(ui_tag(row, UI_DIM, g_about_rows[i][0]),
+                   LV_ALIGN_LEFT_MID, 0, 0);
+      lv_obj_align(ui_label(row, UI_OUTFIT_34, UI_INK, g_about_rows[i][1]),
+                   LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+
+  /* Live frame rate and heap */
+
+  y = 510 + nitems(g_about_rows) * LAUNCHER_ROW_H + 80;
+  card = launcher_card(scr, UI_BLUE, UI_MARGIN, y, UI_CONTENT_W, 360);
+  ui_place(ui_tag(card, 0xffffff, "LIVE"), UI_OUTFIT_26, 48, 50);
+  ui_place(ui_tag(card, 0xffffff, "FRAMES / S"), UI_OUTFIT_26, 48, 102);
+  g_about_fps = ui_num(card, UI_OSWALD_120, 0xffffff);
+  lv_obj_align(g_about_fps, LV_ALIGN_TOP_RIGHT, -48,
+               30 - ui_ink_top(UI_OSWALD_120));
+  g_about_heap = ui_label(card, UI_OUTFIT_34, 0xffffff, "");
+  ui_place(g_about_heap, UI_OUTFIT_34, 48, 228);
+
+  obj = ui_box(card, UI_BLUE_DIM, 0);
+  lv_obj_set_pos(obj, 48, 288);
+  lv_obj_set_size(obj, UI_CONTENT_W - 2 * 48, 20);
+  g_about_bar = ui_box(obj, 0xffffff, 0);
+  lv_obj_set_size(g_about_bar, 0, 20);
+
+  /* Back bar */
+
+  obj = ui_box(scr, UI_INK, UI_RADIUS);
+  lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(obj, lv_color_hex(UI_INK_2), LV_STATE_PRESSED);
+  lv_obj_set_pos(obj, UI_MARGIN, 1672);
+  lv_obj_set_size(obj, UI_CONTENT_W, 136);
+  lv_obj_add_event_cb(obj, launcher_about_close_cb, LV_EVENT_CLICKED, NULL);
+  row = lv_obj_create(obj);
+  lv_obj_remove_style_all(row);
+  lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row, 32, 0);
+  lv_obj_center(row);
+  ui_label(row, UI_ICON_48, 0xffffff, LV_SYMBOL_LEFT);
+  ui_label(row, UI_OSWALD_64, 0xffffff, "BACK");
 
   g_about_scr = scr;
 }
 
 /****************************************************************************
- * Name: home screen
- ****************************************************************************/
-
-static void launcher_create_home_scr(int last)
-{
-  lv_obj_t *scr = launcher_screen();
-
-  launcher_label(scr, "openvela", &lv_font_montserrat_48, 0xffffff,
-                 LV_ALIGN_TOP_LEFT, LAUNCHER_MARGIN, 72);
-
-  launcher_label(scr, "LogicPi A1", &lv_font_montserrat_24,
-                 LAUNCHER_TEXT_DIM, LV_ALIGN_TOP_RIGHT, -LAUNCHER_MARGIN,
-                 92);
-
-  g_home_tiles = lv_obj_create(scr);
-  lv_obj_remove_style_all(g_home_tiles);
-  lv_obj_set_scroll_dir(g_home_tiles, LV_DIR_VER);
-  lv_obj_set_style_pad_bottom(g_home_tiles, LAUNCHER_MARGIN, 0);
-  lv_obj_set_size(g_home_tiles, LAUNCHER_SCREEN_W - 2 * LAUNCHER_MARGIN,
-                  LAUNCHER_SCREEN_H - LAUNCHER_TILES_Y);
-  lv_obj_set_pos(g_home_tiles, LAUNCHER_MARGIN, LAUNCHER_TILES_Y);
-  launcher_create_tiles(g_home_tiles, last);
-
-  g_home_scr = scr;
-}
-
-/* Tiles fly in from the right, top left first */
-
-static void launcher_home_intro(void)
-{
-  lv_obj_t *tile;
-  uint32_t i;
-
-  for (i = 0; i < lv_obj_get_child_count(g_home_tiles); i++)
-    {
-      tile = lv_obj_get_child(g_home_tiles, i);
-      launcher_anim(tile, launcher_translate_x_cb, LAUNCHER_SCREEN_W, 0,
-                    (lv_obj_get_style_x(tile, 0) +
-                     lv_obj_get_style_y(tile, 0)) /
-                    LAUNCHER_TILE_STEP * 50,
-                    lv_anim_path_ease_out, NULL);
-    }
-}
-
-/****************************************************************************
- * Name: lock curtain
+ * Name: lock screen
+ *
+ * The lock lives on the top layer over the home screen.  Dragging the
+ * orange block, or swiping anywhere, moves the block with the finger.
+ * Far enough and the lock lifts away, otherwise the block springs back.
+ * A tap on the block unlocks too.
  ****************************************************************************/
 
 static void launcher_unlocked_cb(lv_anim_t *a)
@@ -545,64 +670,54 @@ static void launcher_unlocked_cb(lv_anim_t *a)
 
 static void launcher_unlock(void)
 {
-  lv_obj_remove_flag(g_home_tiles, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_scroll_to_y(g_home_scr, 0, LV_ANIM_OFF);
   launcher_home_intro();
-  launcher_anim(g_lock, launcher_translate_y_cb,
-                lv_obj_get_style_translate_y(g_lock, 0), -LAUNCHER_SCREEN_H,
-                0, lv_anim_path_ease_in, launcher_unlocked_cb);
+  ui_anim(g_lock, launcher_translate_y_cb,
+          lv_obj_get_style_translate_y(g_lock, 0), -UI_SCREEN_H,
+          LAUNCHER_LIFT_TIME, 0, launcher_unlocked_cb);
 }
 
-static void launcher_unlock_event_cb(lv_event_t *e)
+static void launcher_lock_cb(lv_event_t *e)
 {
   UNUSED(e);
-  launcher_unlock();
-}
-
-/* Tiles stay hidden under the curtain and fly in when it is lifted */
-
-static void launcher_locked_cb(lv_anim_t *a)
-{
-  UNUSED(a);
-  lv_obj_add_flag(g_home_tiles, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void launcher_lock_event_cb(lv_event_t *e)
-{
-  UNUSED(e);
+  lv_obj_set_style_translate_y(g_unlock, 0, 0);
   lv_obj_remove_flag(g_lock, LV_OBJ_FLAG_HIDDEN);
-  launcher_anim(g_lock, launcher_translate_y_cb, -LAUNCHER_SCREEN_H, 0, 0,
-                lv_anim_path_ease_out, launcher_locked_cb);
+  ui_anim(g_lock, launcher_translate_y_cb, -UI_SCREEN_H, 0,
+          LAUNCHER_LIFT_TIME, 0, NULL);
 }
 
-static void launcher_drag_event_cb(lv_event_t *e)
+static void launcher_drag_cb(lv_event_t *e)
 {
   lv_event_code_t code = lv_event_get_code(e);
   lv_point_t p;
   int32_t dy;
 
   lv_indev_get_point(lv_indev_active(), &p);
-  dy = MAX(g_drag_start - p.y, 0);
 
   if (code == LV_EVENT_PRESSED)
     {
       g_drag_start = p.y;
+      g_drag_unlock = p.y >= LAUNCHER_UNLOCK_Y;
+      return;
     }
-  else if (code == LV_EVENT_PRESSING)
+
+  dy = MAX(g_drag_start - p.y, 0);
+
+  if (code == LV_EVENT_PRESSING)
     {
-      lv_obj_set_style_translate_y(g_lock, -dy, 0);
+      lv_obj_set_style_translate_y(g_unlock, -dy, 0);
     }
-  else if (dy > UNLOCK_DRAG_DIST)
+  else if (dy > LAUNCHER_UNLOCK_DIST ||
+           (g_drag_unlock && dy < LAUNCHER_TAP_DIST))
     {
       launcher_unlock();
     }
   else
     {
-      launcher_anim(g_lock, launcher_translate_y_cb, -dy, 0, 0,
-                    lv_anim_path_overshoot, NULL);
+      ui_anim(g_unlock, launcher_translate_y_cb, -dy, 0,
+              LAUNCHER_BOUNCE_TIME, 0, NULL);
     }
 }
-
-/* The curtain lives on the top layer and follows the finger */
 
 static void launcher_create_lock(void)
 {
@@ -613,41 +728,60 @@ static void launcher_create_lock(void)
   lv_obj_remove_style_all(lock);
   lv_obj_remove_flag(lock, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(lock, LV_OBJ_FLAG_PRESS_LOCK);
-  lv_obj_set_size(lock, LAUNCHER_SCREEN_W, LAUNCHER_SCREEN_H);
-  lv_obj_set_style_bg_color(lock, lv_color_hex(LAUNCHER_LOCK_COLOR), 0);
-  lv_obj_set_style_bg_grad_color(lock, lv_color_black(), 0);
-  lv_obj_set_style_bg_grad_dir(lock, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_size(lock, UI_SCREEN_W, UI_SCREEN_H);
+  lv_obj_set_style_bg_color(lock, lv_color_hex(UI_BG), 0);
   lv_obj_set_style_bg_opa(lock, LV_OPA_COVER, 0);
-  lv_obj_add_event_cb(lock, launcher_drag_event_cb, LV_EVENT_PRESSED, NULL);
-  lv_obj_add_event_cb(lock, launcher_drag_event_cb, LV_EVENT_PRESSING,
-                      NULL);
-  lv_obj_add_event_cb(lock, launcher_drag_event_cb, LV_EVENT_RELEASED,
-                      NULL);
+  lv_obj_add_event_cb(lock, launcher_drag_cb, LV_EVENT_PRESSED, NULL);
+  lv_obj_add_event_cb(lock, launcher_drag_cb, LV_EVENT_PRESSING, NULL);
+  lv_obj_add_event_cb(lock, launcher_drag_cb, LV_EVENT_RELEASED, NULL);
 
-  g_lock_clock = launcher_label(lock, "00:00:00", &lv_font_montserrat_48,
-                                0xffffff, LV_ALIGN_TOP_MID, 0, 260);
-  launcher_zoom_label(g_lock_clock, 50, 0);
-  launcher_dim(launcher_label(lock, "openvela on LogicPi A1",
-                              &lv_font_montserrat_24, 0xffffff,
-                              LV_ALIGN_TOP_MID, 0, 420));
+  launcher_topbar(lock, UI_INK, "OPENVELA");
 
-  obj = launcher_ring(lock, LV_SYMBOL_UP, launcher_unlock_event_cb);
-  lv_obj_add_flag(obj, LV_OBJ_FLAG_EVENT_BUBBLE | LV_OBJ_FLAG_PRESS_LOCK);
-  lv_obj_align(obj, LV_ALIGN_BOTTOM_MID, 0, -150);
+  /* Hours and minutes stacked, seconds beside the minutes */
+
+  g_lock_hour = ui_num(lock, UI_OSWALD_300, UI_INK);
+  ui_place(g_lock_hour, UI_OSWALD_300, UI_MARGIN, 203);
+  g_lock_min = ui_num(lock, UI_OSWALD_300, UI_INK);
+  ui_place(g_lock_min, UI_OSWALD_300, UI_MARGIN, 492);
+  ui_place(ui_tag(lock, UI_DIM, "UPTIME"), UI_OUTFIT_26, 428, 563);
+  g_lock_sec = ui_num(lock, UI_OSWALD_120, UI_ORANGE);
+  ui_place(g_lock_sec, UI_OSWALD_120, 428, 620);
+
+  obj = ui_box(lock, UI_INK, 0);
+  lv_obj_set_pos(obj, UI_MARGIN, 880);
+  lv_obj_set_size(obj, UI_CONTENT_W, 6);
+
+  ui_place(ui_label(lock, UI_OUTFIT_52, UI_INK, "openvela on\nLogicPi A1"),
+           UI_OUTFIT_52, UI_MARGIN, 935);
+  obj = ui_label(lock, UI_OUTFIT_26, UI_DIM,
+                 "NuttX\nAmlogic S6\n4x Cortex-A510");
+  lv_obj_set_style_text_line_space(obj, 8, 0);
+  lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_RIGHT, 0);
+  launcher_right(obj, UI_OUTFIT_26, UI_MARGIN, 939);
+
+  /* Unlock block */
+
+  g_unlock = ui_box(lock, UI_ORANGE, 0);
+  lv_obj_add_flag(g_unlock, LV_OBJ_FLAG_EVENT_BUBBLE);
+  lv_obj_set_pos(g_unlock, 0, LAUNCHER_UNLOCK_Y);
+  lv_obj_set_size(g_unlock, UI_SCREEN_W, UI_SCREEN_H - LAUNCHER_UNLOCK_Y);
+  ui_place(ui_label(g_unlock, UI_OSWALD_120, 0xffffff, "SWIPE UP"),
+           UI_OSWALD_120, UI_MARGIN, 130);
+  ui_place(ui_label(g_unlock, UI_OUTFIT_34, 0xffffff,
+                    "or tap here to unlock"), UI_OUTFIT_34, UI_MARGIN, 284);
+
+  obj = ui_label(g_unlock, UI_ICON_48, 0xffffff, LV_SYMBOL_UP);
+  lv_obj_align(obj, LV_ALIGN_TOP_RIGHT, -UI_MARGIN, 160);
 
   lv_anim_init(&a);
   lv_anim_set_var(&a, obj);
   lv_anim_set_exec_cb(&a, launcher_translate_y_cb);
-  lv_anim_set_values(&a, 0, -20);
-  lv_anim_set_duration(&a, 600);
-  lv_anim_set_playback_duration(&a, 600);
+  lv_anim_set_values(&a, 0, -LAUNCHER_FLOAT_DIST);
+  lv_anim_set_duration(&a, LAUNCHER_FLOAT_TIME);
+  lv_anim_set_playback_duration(&a, LAUNCHER_FLOAT_TIME);
   lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
   lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
   lv_anim_start(&a);
-
-  launcher_dim(launcher_label(lock, "Swipe up to unlock",
-                              &lv_font_montserrat_24, 0xffffff,
-                              LV_ALIGN_BOTTOM_MID, 0, -80));
 
   g_lock = lock;
 }
@@ -661,18 +795,40 @@ static void launcher_periodic_cb(lv_timer_t *timer)
   struct mallinfo mi = mallinfo();
   struct timespec ts;
   unsigned int sec;
-
-  UNUSED(timer);
+  bool anim = timer != NULL;
+  char text[32];
 
   clock_gettime(CLOCK_MONOTONIC, &ts);
   sec = ts.tv_sec;
 
-  lv_label_set_text_fmt(g_lock_clock, "%02u:%02u:%02u",
-                        (sec / 3600) % 100, (sec / 60) % 60, sec % 60);
-  lv_label_set_text(g_home_clock, lv_label_get_text(g_lock_clock));
-  lv_label_set_text_fmt(g_home_heap, "%u KB", mi.fordblks / 1024);
-  lv_label_set_text_fmt(g_about_uptime, "%u s", sec);
-  lv_label_set_text_fmt(g_about_heap, "%u KB", mi.fordblks / 1024);
+  g_fps = lv_display_get_inactive_time(NULL) > LAUNCHER_IDLE_TIME ?
+          -1 : (int)g_frames;
+  g_frames = 0;
+
+  snprintf(text, sizeof(text), "%02u", sec / 3600 % 100);
+  ui_num_set(g_lock_hour, text, anim);
+  snprintf(text, sizeof(text), "%02u", sec / 60 % 60);
+  ui_num_set(g_lock_min, text, anim);
+  snprintf(text, sizeof(text), "%02u", sec % 60);
+  ui_num_set(g_lock_sec, text, anim);
+  ui_num_set(g_home_sec, text, anim);
+  snprintf(text, sizeof(text), "%02u:%02u", sec / 3600 % 100,
+           sec / 60 % 60);
+  ui_num_set(g_home_clock, text, anim);
+
+  snprintf(text, sizeof(text), "%uM", mi.fordblks >> 20);
+  ui_num_set(g_home_heap, text, anim);
+  lv_label_set_text_fmt(g_home_uptime, "%uh %um", sec / 3600,
+                        sec / 60 % 60);
+  lv_label_set_text_fmt(g_about_heap, "Heap %uKB free of %uKB",
+                        mi.fordblks >> 10, mi.arena >> 10);
+  lv_obj_set_width(g_about_bar, launcher_heap_used(&mi));
+
+  launcher_fps_text(text, sizeof(text), " FPS");
+  lv_label_set_text(g_top_fps, text);
+  launcher_fps_text(text, sizeof(text), "");
+  ui_num_set(g_home_fps, text, anim);
+  ui_num_set(g_about_fps, text, anim);
 }
 
 /* "last" is the app that just exited, or -1 on boot */
@@ -680,7 +836,6 @@ static void launcher_periodic_cb(lv_timer_t *timer)
 static int launcher_start(int last)
 {
   lv_nuttx_dsc_t info;
-  lv_obj_t *obj;
 
   lv_init();
 
@@ -693,33 +848,26 @@ static int launcher_start(int last)
       return -ENODEV;
     }
 
-  lv_style_transition_dsc_init(&g_press_trans, g_press_props,
-                               lv_anim_path_ease_out, 120, 0, NULL);
+  lv_display_add_event_cb(g_result.disp, launcher_render_cb,
+                          LV_EVENT_RENDER_READY, NULL);
 
-  launcher_create_about_scr();
-  launcher_create_home_scr(last);
+  g_fps = -1;
+  launcher_create_about();
+  launcher_create_home();
   launcher_create_lock();
   lv_screen_load(g_home_scr);
 
   launcher_periodic_cb(NULL);
   lv_timer_create(launcher_periodic_cb, 1000, NULL);
-  lv_timer_create(launcher_flip_cb, LAUNCHER_FLIP_PERIOD, NULL);
 
-  if (last < 0)
+  /* Back from an app: straight to the home screen */
+
+  if (last >= 0)
     {
-      lv_obj_add_flag(g_home_tiles, LV_OBJ_FLAG_HIDDEN);
-      return 0;
+      lv_obj_add_flag(g_lock, LV_OBJ_FLAG_HIDDEN);
+      launcher_home_intro();
     }
 
-  /* Shrink the app back into its tile */
-
-  lv_obj_add_flag(g_lock, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_update_layout(g_home_scr);
-  lv_obj_get_coords(g_return_tile, &g_zoom_area);
-
-  obj = launcher_app_tile(lv_layer_top(), last, false);
-  launcher_anim(obj, launcher_zoom_cb, LAUNCHER_ZOOM_MAX, 0, 0,
-                lv_anim_path_ease_in_out, lv_obj_delete_anim_completed_cb);
   return 0;
 }
 
@@ -758,7 +906,7 @@ int main(int argc, FAR char *argv[])
           usleep(MAX(idle, 1) * 1000);
         }
 
-      /* Keep the zoomed tile on screen while the app starts */
+      /* Show the pressed tile while the app starts */
 
       lv_refr_now(NULL);
       launcher_stop();

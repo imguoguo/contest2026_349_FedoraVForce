@@ -9,9 +9,11 @@ config LVX_USE_DEMO_LAUNCHER
 	depends on GRAPHICS_LVGL && BUILTIN
 	select LV_USE_NUTTX
 	select LV_USE_NUTTX_TOUCHSCREEN
+	select LVX_UI
 	select SCHED_WAITPID
 	---help---
-		Tile style home screen that lists and starts LVGL builtin apps.
+		Lock screen and dashboard home that lists and starts LVGL
+		builtin apps.
 
 if LVX_USE_DEMO_LAUNCHER
 
