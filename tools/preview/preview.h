@@ -59,6 +59,7 @@ int preview_clock_gettime(clockid_t id, struct timespec *ts);
 uint32_t preview_now(void);
 void preview_step(uint32_t ms);
 void preview_touch(int32_t x, int32_t y, bool pressed);
+void preview_touch_points(int n, const lv_point_t *pts);
 void preview_drag(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
                   uint32_t ms);
 void preview_shot(const char *name);

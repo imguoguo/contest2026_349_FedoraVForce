@@ -1,8 +1,8 @@
 /****************************************************************************
  * tools/preview/scene_touch.c
  *
- * Touch: a stroke being drawn, the trail fading, the calibration check
- * and its result.
+ * Touch: a stroke being drawn, the trail fading, three fingers at once,
+ * the calibration check and its result.
  ****************************************************************************/
 
 #include <math.h>
@@ -49,6 +49,25 @@ int main(void)
   preview_step(700);
   preview_shot("8b-touch-fading.png");
   preview_step(1000);
+
+  /* Three fingers spreading out from the middle, one lifts first */
+
+  for (i = 0; i <= 60; i++)
+    {
+      lv_point_t pts[3] =
+        {
+          { 540 - 6 * i, 1000 - 3 * i },
+          { 540 + 6 * i, 1000 - 3 * i },
+          { 540, 1000 + 6 * i },
+        };
+
+      preview_touch_points(i < 50 ? 3 : 2, pts);
+      preview_step(10);
+    }
+
+  preview_shot("8e-touch-fingers.png");
+  preview_touch_points(0, NULL);
+  preview_step(2000);
 
   tap(540, 1733);
   preview_step(100);

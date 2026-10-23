@@ -5,24 +5,37 @@
  * as lv_nuttx_fbdev on the board, plus the scene API of preview.h.
  ****************************************************************************/
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <zlib.h>
 
 #include <malloc.h>
 #include <nuttx/arch.h>
+#include <nuttx/input/touchscreen.h>
 #include <nuttx/lib/builtin.h>
 
 #include "preview.h"
 
 #define W 1080
 #define H 1920
+#define PREVIEW_POINTS 10
 
 static uint16_t g_fb[W * H];
 static uint32_t g_ms;
 static lv_point_t g_point;
 static bool g_pressed;
+
+/* Touch samples like the driver gives, through a pipe.  Its read end is
+ * the driver data of the input device, the way lv_nuttx keeps the
+ * touchscreen file descriptor first in its driver data.
+ */
+
+static int g_ts[2] = { -1, -1 };
+static uint16_t g_ts_down;          /* Bit per finger that is down */
+static lv_point_t g_ts_last[PREVIEW_POINTS];
 
 /* Apps the launcher finds as builtins */
 
@@ -89,6 +102,8 @@ void lv_nuttx_dsc_init(lv_nuttx_dsc_t *dsc)
 
 void lv_nuttx_init(const lv_nuttx_dsc_t *dsc, lv_nuttx_result_t *result)
 {
+  char drain[256];
+
   memset(result, 0, sizeof(*result));
   lv_tick_set_cb(preview_tick);
 
@@ -101,6 +116,18 @@ void lv_nuttx_init(const lv_nuttx_dsc_t *dsc, lv_nuttx_result_t *result)
   result->indev = lv_indev_create();
   lv_indev_set_type(result->indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(result->indev, preview_read);
+
+  /* Drop what earlier scenes wrote and nobody read */
+
+  if (g_ts[0] < 0 && pipe(g_ts) == 0)
+    {
+      fcntl(g_ts[0], F_SETFL, O_NONBLOCK);
+      fcntl(g_ts[1], F_SETFL, O_NONBLOCK);
+    }
+
+  while (read(g_ts[0], drain, sizeof(drain)) > 0);
+  g_ts_down = 0;
+  lv_indev_set_driver_data(result->indev, &g_ts[0]);
 }
 
 void lv_nuttx_deinit(lv_nuttx_result_t *result)
@@ -194,11 +221,67 @@ void preview_step(uint32_t ms)
     }
 }
 
+/* n fingers at pts[], finger i has id i.  The sample has room for
+ * PREVIEW_POINTS, like an app reading the driver would ask for.
+ */
+
+void preview_touch_points(int n, const lv_point_t *pts)
+{
+  uint64_t buf[(SIZEOF_TOUCH_SAMPLE_S(PREVIEW_POINTS) + 7) / 8];
+  struct touch_sample_s *s = (struct touch_sample_s *)buf;
+  struct touch_point_s *p;
+  uint16_t down = 0;
+  int k = 0;
+  int i;
+
+  memset(buf, 0, sizeof(buf));
+  for (i = 0; i < n && i < PREVIEW_POINTS; i++)
+    {
+      p = &s->point[k++];
+      p->id = i;
+      p->x = pts[i].x;
+      p->y = pts[i].y;
+      g_ts_last[i] = pts[i];
+      p->flags = TOUCH_ID_VALID | TOUCH_POS_VALID |
+                 (g_ts_down & (1 << i) ? TOUCH_MOVE : TOUCH_DOWN);
+      down |= 1 << i;
+    }
+
+  for (i = 0; i < PREVIEW_POINTS; i++)
+    {
+      if (g_ts_down & ~down & (1 << i))
+        {
+          p = &s->point[k++];
+          p->id = i;
+          p->x = g_ts_last[i].x;
+          p->y = g_ts_last[i].y;
+          p->flags = TOUCH_ID_VALID | TOUCH_POS_VALID | TOUCH_UP;
+        }
+    }
+
+  g_ts_down = down;
+  s->npoints = k;
+  if (k > 0 && write(g_ts[1], buf, sizeof(buf)) < 0)
+    {
+      /* Full, nobody reads the samples in this scene */
+    }
+
+  if (n > 0)
+    {
+      g_point = pts[0];
+    }
+
+  g_pressed = n > 0;
+}
+
 void preview_touch(int32_t x, int32_t y, bool pressed)
 {
-  g_point.x = x;
-  g_point.y = y;
-  g_pressed = pressed;
+  lv_point_t p =
+    {
+      x, y
+    };
+
+  preview_touch_points(pressed ? 1 : 0, &p);
 }
 
 /* Move a pressed finger in a straight line, one point per 10ms */
