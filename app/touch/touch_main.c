@@ -3,14 +3,15 @@
  *
  * Touch test
  *
- * Trails of the finger that fade out after it lifts, live coordinates,
- * the report rate of the touch controller and a calibration check: tap
- * five targets and see how far off the reported points are.
+ * A trail for every finger that fades out after it lifts, live
+ * coordinates, the report rate of the touch controller, the number of
+ * fingers and a calibration check: tap five targets and see how far off
+ * the reported points are.
  *
- * The samples are taken in the read callback of the LVGL input device,
- * so every report of the controller is counted and drawn, not just one
- * per LVGL input period.  The GT9XX driver reports a single point, there
- * is one trail at a time.
+ * touch reads the touchscreen itself instead of the LVGL driver, which
+ * only passes on one point: every sample of the controller is counted and
+ * every finger in it drawn, and LVGL gets the first finger for the
+ * buttons.
  ****************************************************************************/
 
 /****************************************************************************
@@ -19,12 +20,16 @@
 
 #include <nuttx/config.h>
 
+#include <sys/ioctl.h>
 #include <sys/param.h>
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+
+#include <nuttx/input/touchscreen.h>
 
 #include <lvgl/lvgl.h>
 
@@ -44,6 +49,9 @@
 #define TOUCH_FADE_DELAY      300
 #define TOUCH_FADE_TIME       900
 
+#define TOUCH_MAX_POINTS      10      /* Room in a sample */
+#define TOUCH_IDS             16      /* GT9XX track IDs are 0 to 15 */
+
 #define TOUCH_TARGET_INSET    120
 #define TOUCH_TARGET_SIZE     120
 #define TOUCH_TARGETS         5
@@ -58,31 +66,41 @@ struct touch_line_s
 {
   lv_point_precise_t points[TOUCH_LINE_POINTS];
   uint32_t npoints;
+  int id;                   /* Finger */
+};
+
+struct touch_finger_s
+{
+  lv_obj_t *line;           /* Line being drawn, NULL when up */
+  lv_obj_t *dot;
+  bool down;
+  bool drawing;             /* Press started in the trail area */
 };
 
 /****************************************************************************
  * Private Data
  ****************************************************************************/
 
+/* One color per finger */
+
 static const uint32_t g_colors[] =
 {
-  UI_ORANGE, UI_BLUE, UI_YELLOW, UI_PAPER
+  UI_ORANGE, UI_BLUE, UI_YELLOW, UI_PAPER, 0x3ecf8e
 };
 
-static lv_indev_read_cb_t g_read_cb;
+static int g_fd;
+static uint64_t g_sample[(SIZEOF_TOUCH_SAMPLE_S(TOUCH_MAX_POINTS) + 7) / 8];
+static struct touch_finger_s g_fingers[TOUCH_IDS];
+static lv_point_t g_point;          /* First finger, given to LVGL */
+static int g_down;                  /* Fingers on the panel */
 
 static lv_obj_t *g_scr;
-static lv_obj_t *g_dot;
-static lv_obj_t *g_line;            /* Line being drawn, NULL when up */
 static lv_obj_t *g_stat[4];         /* X, Y, rate, points */
 static lv_obj_t *g_cal;             /* Calibration overlay */
 static lv_obj_t *g_cal_target;
 static lv_obj_t *g_cal_text;
 
-static uint32_t g_color;
 static uint32_t g_reports;
-static bool g_pressed;
-static bool g_drawing;              /* Press started in the trail area */
 static int g_target;
 static lv_point_t g_offset[TOUCH_TARGETS];
 static bool g_running;
@@ -109,6 +127,11 @@ static lv_point_t touch_target(int i)
   return p;
 }
 
+static uint32_t touch_color(int id)
+{
+  return g_colors[id % nitems(g_colors)];
+}
+
 /****************************************************************************
  * Name: trails
  ****************************************************************************/
@@ -118,7 +141,7 @@ static void touch_line_delete_cb(lv_event_t *e)
   lv_free(lv_event_get_user_data(e));
 }
 
-static lv_obj_t *touch_line_create(void)
+static lv_obj_t *touch_line_create(int id)
 {
   struct touch_line_s *pts = lv_malloc(sizeof(struct touch_line_s));
   lv_obj_t *line;
@@ -129,47 +152,49 @@ static lv_obj_t *touch_line_create(void)
     }
 
   pts->npoints = 0;
+  pts->id = id;
   line = lv_line_create(g_scr);
   lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_line_width(line, TOUCH_LINE_W, 0);
   lv_obj_set_style_line_rounded(line, true, 0);
-  lv_obj_set_style_line_color(line, lv_color_hex(g_colors[g_color]), 0);
+  lv_obj_set_style_line_color(line, lv_color_hex(touch_color(id)), 0);
   lv_obj_set_user_data(line, pts);
   lv_obj_add_event_cb(line, touch_line_delete_cb, LV_EVENT_DELETE, pts);
-  lv_obj_move_to_index(line, lv_obj_get_index(g_dot));
+  lv_obj_move_to_index(line, lv_obj_get_index(g_fingers[0].dot));
   return line;
 }
 
-static void touch_line_add(int32_t x, int32_t y)
+static void touch_line_add(struct touch_finger_s *f, int id, int32_t x,
+                           int32_t y)
 {
   struct touch_line_s *pts;
   lv_point_precise_t last;
 
-  if (g_line == NULL)
+  if (f->line == NULL)
     {
       return;
     }
 
   /* A full line ends here, the next one goes on from its last point */
 
-  pts = lv_obj_get_user_data(g_line);
+  pts = lv_obj_get_user_data(f->line);
   if (pts->npoints == TOUCH_LINE_POINTS)
     {
       last = pts->points[TOUCH_LINE_POINTS - 1];
-      g_line = touch_line_create();
-      if (g_line == NULL)
+      f->line = touch_line_create(id);
+      if (f->line == NULL)
         {
           return;
         }
 
-      pts = lv_obj_get_user_data(g_line);
+      pts = lv_obj_get_user_data(f->line);
       pts->points[pts->npoints++] = last;
     }
 
   pts->points[pts->npoints].x = x;
   pts->points[pts->npoints].y = y;
   pts->npoints++;
-  lv_line_set_points(g_line, pts->points, pts->npoints);
+  lv_line_set_points(f->line, pts->points, pts->npoints);
 }
 
 static void touch_fade_cb(void *obj, int32_t v)
@@ -182,18 +207,25 @@ static void touch_faded_cb(lv_anim_t *a)
   lv_obj_delete_async(a->var);
 }
 
-/* Fade out every line of the stroke that just ended */
+/* Fade out every line of the stroke of finger id that just ended */
 
-static void touch_stroke_end(void)
+static void touch_stroke_end(int id)
 {
+  struct touch_line_s *pts;
   lv_obj_t *obj;
   uint32_t i;
 
   for (i = 0; i < lv_obj_get_child_count(g_scr); i++)
     {
       obj = lv_obj_get_child(g_scr, i);
-      if (lv_obj_check_type(obj, &lv_line_class) &&
-          !lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_1))
+      if (!lv_obj_check_type(obj, &lv_line_class) ||
+          lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_1))
+        {
+          continue;
+        }
+
+      pts = lv_obj_get_user_data(obj);
+      if (pts->id == id)
         {
           lv_obj_add_flag(obj, LV_OBJ_FLAG_USER_1);
           ui_anim(obj, touch_fade_cb, LV_OPA_COVER, LV_OPA_TRANSP,
@@ -201,81 +233,91 @@ static void touch_stroke_end(void)
         }
     }
 
-  g_line = NULL;
-  g_color = (g_color + 1) % nitems(g_colors);
+  g_fingers[id].line = NULL;
 }
 
-static void touch_sample(int32_t x, int32_t y, bool pressed)
+static void touch_finger(int id, int32_t x, int32_t y, bool down)
 {
-  if (pressed)
-    {
-      lv_label_set_text_fmt(g_stat[0], "%d", (int)x);
-      lv_label_set_text_fmt(g_stat[1], "%d", (int)y);
-    }
+  struct touch_finger_s *f = &g_fingers[id];
 
-  lv_label_set_text(g_stat[3], pressed ? "1" : "0");
-
-  if (g_cal != NULL)
+  if (g_cal == NULL && down && !f->down)
     {
-      return;
-    }
-
-  if (pressed && !g_pressed)
-    {
-      g_drawing = y >= TOUCH_AREA_Y && y < TOUCH_AREA_BOTTOM;
-      if (g_drawing)
+      f->drawing = y >= TOUCH_AREA_Y && y < TOUCH_AREA_BOTTOM;
+      if (f->drawing)
         {
-          g_line = touch_line_create();
+          f->line = touch_line_create(id);
         }
     }
 
-  if (g_drawing && pressed)
+  f->down = down;
+
+  if (f->drawing && down)
     {
-      touch_line_add(x, y);
-      lv_obj_set_pos(g_dot, x - TOUCH_DOT_SIZE / 2, y - TOUCH_DOT_SIZE / 2);
-      lv_obj_set_style_border_color(g_dot, lv_color_hex(g_colors[g_color]),
-                                    0);
-      lv_obj_remove_flag(g_dot, LV_OBJ_FLAG_HIDDEN);
+      touch_line_add(f, id, x, y);
+      lv_obj_set_pos(f->dot, x - TOUCH_DOT_SIZE / 2, y - TOUCH_DOT_SIZE / 2);
+      lv_obj_remove_flag(f->dot, LV_OBJ_FLAG_HIDDEN);
     }
-  else if (g_drawing)
+  else if (f->drawing)
     {
-      lv_obj_add_flag(g_dot, LV_OBJ_FLAG_HIDDEN);
-      touch_stroke_end();
-      g_drawing = false;
+      lv_obj_add_flag(f->dot, LV_OBJ_FLAG_HIDDEN);
+      touch_stroke_end(id);
+      f->drawing = false;
     }
 }
 
-/* Wraps the read callback of the touchscreen.  LVGL fills data->point
- * with the last point before the call; the NuttX driver only writes it
- * when a new sample came in, so a point that is still the marker below
- * means nothing new.  A release writes no point.
+/* Replaces the read callback of the LVGL touchscreen.  One sample per
+ * call, with continue_reading while there are more, so that LVGL sees
+ * every press and release.
  */
 
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-  lv_point_t last = data->point;
-  bool pressed;
+  FAR struct touch_sample_s *sample = (FAR struct touch_sample_s *)g_sample;
+  FAR struct touch_point_s *p;
+  int32_t x;
+  int32_t y;
+  bool down;
+  int n = 0;
+  int i;
 
-  data->point.x = -1;
-  g_read_cb(indev, data);
-  pressed = data->state == LV_INDEV_STATE_PRESSED;
+  UNUSED(indev);
 
-  if (data->point.x >= 0)
+  if (read(g_fd, g_sample, sizeof(g_sample)) >=
+      (ssize_t)SIZEOF_TOUCH_SAMPLE_S(1))
     {
       g_reports++;
-      touch_sample(data->point.x, data->point.y, pressed);
-    }
-  else
-    {
-      data->point = last;
-      if (g_pressed && !pressed)
+      for (i = 0; i < MIN(sample->npoints, TOUCH_MAX_POINTS); i++)
         {
-          g_reports++;
-          touch_sample(last.x, last.y, false);
+          p = &sample->point[i];
+          down = (p->flags & (TOUCH_DOWN | TOUCH_MOVE)) != 0;
+          x = LV_CLAMP(0, p->x, UI_SCREEN_W - 1);
+          y = LV_CLAMP(0, p->y, UI_SCREEN_H - 1);
+          if (p->id < TOUCH_IDS)
+            {
+              touch_finger(p->id, x, y, down);
+            }
+
+          if (down && n++ == 0)
+            {
+              g_point.x = x;
+              g_point.y = y;
+            }
         }
+
+      g_down = n;
+      if (n > 0)
+        {
+          lv_label_set_text_fmt(g_stat[0], "%d", (int)g_point.x);
+          lv_label_set_text_fmt(g_stat[1], "%d", (int)g_point.y);
+        }
+
+      lv_label_set_text_fmt(g_stat[3], "%d", n);
+      data->continue_reading = true;
     }
 
-  g_pressed = pressed;
+  data->point = g_point;
+  data->state = g_down > 0 ? LV_INDEV_STATE_PRESSED :
+                             LV_INDEV_STATE_RELEASED;
 }
 
 static void touch_rate_cb(lv_timer_t *timer)
@@ -449,10 +491,11 @@ static void touch_create(void)
 {
   static const char * const names[] =
   {
-    "X", "Y", "REPORTS / S", "POINTS"
+    "X", "Y", "REPORTS / S", "FINGERS"
   };
 
   lv_obj_t *obj;
+  uint8_t max;
   int32_t x;
   int i;
 
@@ -484,15 +527,24 @@ static void touch_create(void)
   obj = ui_box(g_scr, UI_INK_2, 0);
   lv_obj_set_pos(obj, UI_MARGIN, TOUCH_AREA_Y - 2);
   lv_obj_set_size(obj, UI_CONTENT_W, 2);
-  obj = ui_label(g_scr, UI_OUTFIT_26, UI_DIM,
-                 "Draw anywhere here.  GT9XX reports one point.");
+  obj = ui_label(g_scr, UI_OUTFIT_26, UI_DIM, "Draw anywhere here");
+  if (ioctl(g_fd, TSIOC_GETMAXPOINTS, (unsigned long)(uintptr_t)&max) >= 0)
+    {
+      lv_label_set_text_fmt(obj, "Draw here with up to %d fingers", max);
+    }
+
   lv_obj_align(obj, LV_ALIGN_TOP_MID, 0, TOUCH_AREA_Y + 40);
 
-  g_dot = ui_box(g_scr, 0, LV_RADIUS_CIRCLE);
-  lv_obj_set_size(g_dot, TOUCH_DOT_SIZE, TOUCH_DOT_SIZE);
-  lv_obj_set_style_bg_opa(g_dot, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(g_dot, 6, 0);
-  lv_obj_add_flag(g_dot, LV_OBJ_FLAG_HIDDEN);
+  for (i = 0; i < TOUCH_IDS; i++)
+    {
+      obj = ui_box(g_scr, 0, LV_RADIUS_CIRCLE);
+      lv_obj_set_size(obj, TOUCH_DOT_SIZE, TOUCH_DOT_SIZE);
+      lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
+      lv_obj_set_style_border_width(obj, 6, 0);
+      lv_obj_set_style_border_color(obj, lv_color_hex(touch_color(i)), 0);
+      lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+      g_fingers[i].dot = obj;
+    }
 
   obj = ui_box(g_scr, UI_ORANGE, UI_RADIUS);
   lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
@@ -525,11 +577,15 @@ static int touch_start(lv_nuttx_result_t *result)
   ui_hide_perf();
 
   g_cal = NULL;
-  g_line = NULL;
-  g_pressed = false;
-  g_drawing = false;
   g_reports = 0;
-  g_read_cb = lv_indev_get_read_cb(result->indev);
+  g_down = 0;
+  memset(g_fingers, 0, sizeof(g_fingers));
+
+  /* The NuttX touchscreen of LVGL keeps the file descriptor first in its
+   * driver data
+   */
+
+  g_fd = *(FAR int *)lv_indev_get_driver_data(result->indev);
   lv_indev_set_read_cb(result->indev, touch_read_cb);
 
   touch_create();
