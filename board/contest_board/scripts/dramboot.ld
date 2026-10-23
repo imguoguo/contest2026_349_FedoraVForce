@@ -108,9 +108,25 @@ SECTIONS
   } :text
 
   . = ALIGN(4096);
+  _szdata = . - _sdata;
+
+  /* DMA memory that s6_boot.c maps non-cacheable.  It is left out of
+   * _szdata, which the common MMU code maps cacheable after the board
+   * regions.
+   */
+
+  .noncache (NOLOAD) :
+  {
+    _snoncache = .;
+    *(.noncache .noncache.*)
+    . = ALIGN(4096);
+    _enoncache = .;
+  } :text
+
+  _sznoncache = _enoncache - _snoncache;
+
   _e_initstack = .;
   g_idle_topstack = .;
-  _szdata = _e_initstack - _sdata;
 
   /DISCARD/ :
   {

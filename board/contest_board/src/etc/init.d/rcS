@@ -1,3 +1,9 @@
+/* Writable /tmp, e.g. for files fetched with get.  NSH starts telnetd by
+ * itself (CONFIG_NSH_TELNET).
+ */
+
+mount -t tmpfs /tmp
+
 /* Auto-start the LVGL launcher on boot */
 
 launcher &

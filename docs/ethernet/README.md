@@ -15,7 +15,7 @@ Amlogic 自己改过的代码大多在 `common_drivers/` 下面，跟主线同�
 
 | 项目 | 内容 | 出处 |
 | --- | --- | --- |
-| MAC | Synopsys DWMAC **4.00**（Ethernet QoS），`compatible = "amlogic,meson-axg-dwmac", "snps,dwmac-4.00"` | `common_drivers/arch/arm64/boot/dts/amlogic/meson-s6.dtsi` 的 `ethmac` |
+| MAC | Synopsys DWMAC（Ethernet QoS），`compatible = "amlogic,meson-axg-dwmac", "snps,dwmac-4.00"`；**实测 MAC_Version（0x110）是 0x5053，即 5.30**，中断使能位按 4.10 的布局 | `common_drivers/arch/arm64/boot/dts/amlogic/meson-s6.dtsi` 的 `ethmac` |
 | MAC 寄存器 | `0xfe368000`，长度 `0x12ec` | 同上 |
 | Amlogic 包装寄存器（PRG_ETH） | `0xfe364000`，两个 32 位寄存器：PRG_ETH0 / PRG_ETH1 | 同上 `reg` 的第二段 |
 | 中断 | GIC SPI 74，高电平。NuttX 里的中断号是 **106**（74 + 32，跟串口 SPI 169 → 201 一个算法） | 同上 |
@@ -146,7 +146,7 @@ DMA 不走缓存一致性（设备树里没有 `dma-coherent`），而 NuttX 现
 
 - 发送前对包缓冲区和描述符做 `up_clean_dcache()`；接收前对缓冲区做 `up_invalidate_dcache()`，读描述符前也要先 invalidate。
 - Cortex-A55 的缓存行是 64 字节，DWMAC4 的描述符只有 16 字节。四个描述符共用一行时，CPU 写回一个描述符会把 DMA 刚写完的相邻描述符覆盖掉。解决办法二选一：
-  - 用 `DMA_CH0_Control` 的 DSL 字段让每个描述符后面空 48 字节（总线宽度 64 位，DSL 单位是 8 字节，DSL = 6），描述符按 64 字节对齐；
+  - 用 `DMA_CH0_Control` 的 DSL 字段让每个描述符后面空 48 字节（总线宽度 64 位，DSL 单位是 8 字节，DSL = 6），描述符按 64 字节对齐；**实测不行**：这块 IP 的 DSL 单位是 4 字节（DSL = 6 时 DMA 每次只前进 40 字节），最多只能空 28 字节，凑不到 64；
   - 或者在 `s6_boot.c` 的 MMU 表里另外划一小块不可缓存的内存（`MT_NORMAL_NC`）专门放描述符。
 - 包缓冲区也按 64 字节对齐，长度向上取整到 64 字节。
 
@@ -215,8 +215,32 @@ CONFIG_NETUTILS_TFTPC=y
 
 ---
 
-## 七、待补充
+## 七、结果记录
 
-- 第二节 U-Boot 里的验证结果（PRG_ETH0/1 原值、PHY 延时寄存器原值、改完后千兆是否正常）
-- 100M / 1000M 的 iperf 数字
+### 第一阶段（100M，10/23 上板通过）
+
+- 驱动：`arch/arm64/src/s6/s6_eth.c`（nuttx `s6-eth` 分支，提交 `5a359897`）。发送直接用 IOB 里的数据，接收从驱动自己的缓冲区拷贝；描述符放在链接脚本的 `.noncache` 段，`s6_boot.c` 把这一段映射成 `MT_NORMAL_NC`（第四节的第二种办法，第一种 DSL 的办法在这块 IP 上做不到）
+- 中断按边沿触发配置，中断里循环清状态直到读回 0，电平和边沿都能工作
+- U-Boot 留下的值：MAC 地址 `02:ad:48:01:d1:ef`；PRG_ETH0 = `0x1621`，PRG_ETH1 = `0x00080000`（RX 延时 8 × 200 ps = 1.6 ns，不是 Linux 的 `0x290000`）
+- 验收：1–4、6、7 通过（7 是在主机上改协商速度触发的，10M 和 100M 都切过）；8 留到第二阶段；9 屏幕在动，帧率没量
+- iperf（主机没有 iperf，用 `nc` 当对端）：板子发 **55.7 Mbit/s**，板子收 **89–93 Mbit/s**
+- 超过 MTU 的 ping 不回：需要 IP 分片重组（`NET_IPFRAG`），没开
+
+### 从 eMMC 启动
+
+eMMC 是安卓的分区表，U-Boot 没有 `ext4write`，也没有 FAT 分区可以 `fatwrite`，所以把镜像原样写在 `cache` 分区开头（会破坏安卓的 cache 分区）。U-Boot 里存了几个变量（10/23 `saveenv` 过）：
+
+| 变量 | 作用 |
+| --- | --- |
+| `s6load` | TFTP 下载 `s6-nuttx.bin` 到 `0x03000000` 并打印 crc32 |
+| `s6go` | `fdt rm`、清 `bootargs`、`booti` |
+| `s6save` | 把内存里的镜像写进 eMMC 的 `cache` 分区（先 `run s6load` 核对 crc32） |
+| `s6emmc` | 先 `ping` 一次主机（让 U-Boot 初始化网口，第一阶段的驱动需要），再从 eMMC 读出来 `run s6go` |
+
+`bootcmd` 没动，还是从 U 盘加载 `nuttx.bin`；`bootdelay=-1`，所以开机停在提示符，要手动 `run s6emmc`。
+
+### 待补充
+
+- 第二节 PHY 延时寄存器原值、改完后千兆是否正常
+- 1000M 的 iperf 数字
 - 第三阶段引脚复用的具体寄存器

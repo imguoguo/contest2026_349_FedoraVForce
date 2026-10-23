@@ -31,6 +31,10 @@
 #  include "s6_i2c.h"
 #endif
 
+#ifdef CONFIG_S6_ETH
+#  include "s6_eth.h"
+#endif
+
 #ifdef CONFIG_SMP
 #  include <nuttx/cache.h>
 #  include "arm64_internal.h"
@@ -130,6 +134,14 @@ void board_late_initialize(void)
       syslog(LOG_ERR, "ERROR: touch register failed: %d\n", ret);
     }
 #endif
+#endif
+
+#ifdef CONFIG_S6_ETH
+  ret = s6_eth_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: s6_eth_initialize() failed: %d\n", ret);
+    }
 #endif
 
   UNUSED(ret);
