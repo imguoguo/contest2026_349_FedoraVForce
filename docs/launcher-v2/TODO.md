@@ -55,6 +55,10 @@
 - [ ] `lvdemo benchmark` 跑完，串口有总分和各项；`lvdemo widgets` 能操作、能退出
 - [ ] 接进来的 openvela 应用布局正常，能退出回到 launcher，退出后 `free` 不降
 - [ ] touch：轨迹、坐标、报点率，校准检查给出偏差
+- [ ] 多点触控（nuttx 分支 `gt9xx-multitouch`，编译机上
+  `~/contest2026/s6-nuttx-multitouch.bin`）：touch 里几根手指各一条轨迹、
+  手指数对；launcher、paint 等单点使用不受影响（两指时以第一根为准），
+  快速点按钮不丢；确认后再推到 fork、提 PR
 - [ ] 全程 NSH 能输入
 
 远程能做的（不需要人按屏幕，`/dev/launcher`）：
