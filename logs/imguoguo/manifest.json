@@ -3,20 +3,20 @@
   "team_id": "contest2026_349_FedoraVForce",
   "github_login": "imguoguo",
   "generator": "claude-code-collector@1.3.0",
-  "updated_at": "2026-10-22T10:11:43.889Z",
+  "updated_at": "2026-10-23T00:34:35.311Z",
   "sessions": [
     {
       "session_id": "57f06004-d21b-4cee-a4f2-371d362ee4ea",
       "tool": "claude-code",
       "started_at": "2026-10-22T01:59:41.622Z",
-      "last_event_at": "2026-10-22T10:11:43.866Z",
-      "event_count": 804,
-      "raw_event_count": 2964,
-      "file_path": "logs/imguoguo/2026-10-22/claude-code__57f06004-d21b-4cee-a4f2-371d362ee4ea.jsonl",
+      "last_event_at": "2026-10-23T00:34:35.305Z",
+      "event_count": 326,
+      "raw_event_count": 9848,
+      "file_path": "logs/imguoguo/2026-10-23/claude-code__57f06004-d21b-4cee-a4f2-371d362ee4ea.jsonl",
       "collection_mode": "cli",
       "health": "ok",
       "model": "claude-opus-5-5",
-      "redacted_count_total": 114
+      "redacted_count_total": 343
     }
   ]
 }
