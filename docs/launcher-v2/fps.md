@@ -85,6 +85,35 @@ CoreMark 10847 iterations/s（-O0 是 2233，4.9 倍）。镜像 2.69MB → 2.23
 CoreMark 10824 iterations/s，和 33ms 时一样，界面多刷新的那些帧没有拖慢它
 （它在 CPU3 上）。每帧耗时没变，FPS 翻倍到 58，被 16ms 周期卡住。
 
+## 4b. bench 全部项目（16ms，-O2，镜像 `b796ab3`）
+
+10/23 用 `echo bench run > /dev/launcher` 跑了两次，结果一致（串口只能看到 25 行，
+用 `screen -X hardcopy -h` 取回 screen 的回滚缓冲）。打开 `LV_USE_PERF_MONITOR`
+以后渲染场景和第 4 节相比没有变化：
+
+| 项目 | 第一次 | 第二次 |
+| --- | --- | --- |
+| Rectangles | 58 fps，6.7 ms（flush 6.1） | 同左 |
+| Rounded + border | 58 fps，8.4 ms（flush 6.1） | 同左 |
+| Text | 58 fps，7.9 ms（flush 5.8） | 同左 |
+| Arcs | 58 fps，7.9 ms（flush 3.3） | 同左 |
+| Full-screen slide | 58 fps，8.9 ms（flush 7.0） | 同左 |
+| CoreMark | 10918 | 10935 |
+| 整数（xorshift） | 2395 MOPS | 2395 MOPS |
+| 浮点（64×64 矩阵乘） | 4298 MFLOPS | 4297 MFLOPS |
+| 内存拷贝（4MB） | 599 MB/s | 599 MB/s |
+| 内存填充（4MB） | 1199 MB/s | 1295 MB/s |
+
+手写数字识别，500 张 MNIST 测试图，只计推理：
+
+| 实现 | 单次推理 | 认对 |
+| --- | --- | --- |
+| TFLite Micro（全 int8） | 229 µs | 484 / 500（96.8%） |
+| 手写 C（int8 权重，浮点计算） | 214 µs | 483 / 500（96.6%） |
+
+两者准确率基本一样；手写版本快 7%。没有细测原因，可能是 TFLM 的解释器开销和量化/反量化抵掉了
+int8 计算的好处。手写版本在主机上也是 483 张，和板上一致。
+
 ## 5. 下一步（还没上板）
 
 - NEON（`LV_USE_DRAW_SW_ASM`）：这版 LVGL（9.1）的 NEON 实现只有
